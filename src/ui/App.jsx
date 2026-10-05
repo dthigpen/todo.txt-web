@@ -204,6 +204,7 @@ function App() {
   const [queueRevision, setQueueRevision] = useState(0);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [notice, setNotice] = useState("");
+  const [undoAction, setUndoAction] = useState(null);
   const [serverFiles, setServerFiles] = useState(
     Array.isArray(serverSettings.value.knownFiles)
       ? serverSettings.value.knownFiles
@@ -224,6 +225,8 @@ function App() {
   const searchRef = useRef(null);
   const importRef = useRef(null);
   const saveTimer = useRef(null);
+  const undoActionRef = useRef(null);
+  const undoTimer = useRef(null);
   const syncBusy = useRef(new Set());
   const quickAddRef = useRef(null);
   const tasks = useMemo(
@@ -298,6 +301,55 @@ function App() {
     return () => clearTimeout(saveTimer.current);
   }, [queueRevision, isOnline]);
 
+  useEffect(
+    () => () => {
+      clearTimeout(undoTimer.current);
+    },
+    [],
+  );
+
+  function clearUndoAction() {
+    clearTimeout(undoTimer.current);
+    undoActionRef.current = null;
+    setUndoAction(null);
+  }
+
+  function rememberUndoAction(key, before, after, message) {
+    if (before === after) {
+      setNotice(message);
+      return;
+    }
+    clearTimeout(undoTimer.current);
+    const action = { key, before, after, message };
+    undoActionRef.current = action;
+    setUndoAction(action);
+    setNotice("");
+    undoTimer.current = window.setTimeout(() => {
+      if (undoActionRef.current === action) {
+        undoActionRef.current = null;
+        setUndoAction(null);
+      }
+    }, 8000);
+  }
+
+  function undoLastAction() {
+    const action = undoActionRef.current;
+    if (!action) return;
+    if (
+      currentKey.value !== action.key ||
+      documentContent(action.key) !== action.after
+    ) {
+      clearUndoAction();
+      setNotice(
+        "This change can no longer be undone because the list changed.",
+      );
+      return;
+    }
+    clearUndoAction();
+    updateContent(action.before);
+    setNotice(`Undid: ${action.message.toLowerCase()}`);
+  }
+
   async function refreshServerFiles() {
     try {
       const files = await listFiles(
@@ -320,6 +372,9 @@ function App() {
   }
 
   function updateContent(content) {
+    if (undoActionRef.current?.key === currentKey.value) {
+      clearUndoAction();
+    }
     const previousContent = documentContent(currentKey.value);
     const next = { ...documents.value, [currentKey.value]: content };
     documents.value = next;
@@ -499,10 +554,17 @@ function App() {
   }
 
   function toggleTask(task) {
+    const before = documentContent(currentKey.value);
     const changed = task.completed
       ? reopenTask(task)
       : completeTask(task, today());
     updateTasks(tasks.map((item) => (item.id === task.id ? changed : item)));
+    rememberUndoAction(
+      currentKey.value,
+      before,
+      documentContent(currentKey.value),
+      task.completed ? "Task reopened" : "Task completed",
+    );
   }
 
   function removeTask(task) {
@@ -510,6 +572,8 @@ function App() {
   }
 
   function saveEditedTask(nextTask) {
+    const before = documentContent(currentKey.value);
+    const message = editorTask ? "Task updated" : "Task added";
     if (editorTask) {
       updateTasks(
         tasks.map((item) => (item.id === editorTask.id ? nextTask : item)),
@@ -526,7 +590,12 @@ function App() {
       quickAddRef.current.value = "";
       setQuickDescription("");
     }
-    setNotice(editorTask ? "Task updated" : "Task added");
+    rememberUndoAction(
+      currentKey.value,
+      before,
+      documentContent(currentKey.value),
+      message,
+    );
   }
 
   async function addLocalFile(event) {
@@ -1264,11 +1333,18 @@ function App() {
               </div>
             )}
 
-            {notice && (
+            {undoAction?.key === currentKey.value ? (
+              <div class="undo-notice" role="status" aria-live="polite">
+                <span>{undoAction.message}.</span>
+                <button type="button" onClick={undoLastAction}>
+                  Undo
+                </button>
+              </div>
+            ) : notice ? (
               <p class="inline-notice" role="status">
                 {notice}
               </p>
-            )}
+            ) : null}
 
             {visibleTasks.length ? (
               <div class="task-list">

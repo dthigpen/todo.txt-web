@@ -38,7 +38,8 @@ browser and sync automatically when the server is reachable again. Previously
 selected server lists remain in the list switcher and can be viewed and edited
 from their saved device copies when offline or signed out. Those edits wait
 until you sign in and reconnect. A sync indicator shows which lists are
-waiting. If another client changes a file
+waiting. Completing/reopening a task or saving it in the task editor offers a
+brief Undo action; it is cleared if that list changes again. If another client changes a file
 first, or a save response is lost during a connection drop, the app preserves
 your local copy and flags the conflict rather than silently overwriting the
 server version. **Review & resolve** loads the latest server copy and lets you
