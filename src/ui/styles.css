@@ -2032,6 +2032,56 @@ body {
   }
 
   .quick-add .details-add {
-    flex: 0 0 auto;
+    flex: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .task-title {
+    font-size: 15px;
+  }
+
+  .task-chip,
+  .created-date {
+    font-size: 11px;
+  }
+
+  .search-box {
+    min-height: 40px;
+  }
+
+  .search-box input {
+    font-size: 14px;
+  }
+
+  .quick-add {
+    min-height: 60px;
+  }
+
+  .quick-add input {
+    font-size: 16px;
+  }
+
+  .quick-add .button {
+    min-height: 44px;
+    font-size: 13px;
+  }
+
+  .quick-add .button-primary {
+    color: #526356;
+    background: #f5f6f3;
+    border: 1px solid #eaede8;
+  }
+
+  .quick-add .details-add {
+    color: white;
+    background: var(--green);
+    border: 1px solid var(--green);
+  }
+
+  .dialog input,
+  .dialog select,
+  .dialog textarea {
+    font-size: 16px;
   }
 }
