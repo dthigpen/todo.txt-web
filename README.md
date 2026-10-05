@@ -70,7 +70,12 @@ npm run preview      # preview the production build
 
 The Vite build uses relative paths and is ready to publish as a static GitHub
 Pages site. The repository workflow builds and deploys on pushes to `main`
-after GitHub Pages is configured to use **GitHub Actions** as its source.
+after GitHub Pages is configured to use **GitHub Actions** as its source
+(Repository **Settings → Pages → Build and deployment → Source → GitHub Actions**).
+Do not select **Deploy from a branch**: that serves the unbuilt repository
+files, including `src/main.jsx`, and results in a blank page. The workflow
+checks that `dist/` contains bundled JavaScript and CSS before it uploads the
+Pages artifact.
 
 See [DESIGN.md](DESIGN.md) for the product behavior, file format rules, and
 implementation scope.
