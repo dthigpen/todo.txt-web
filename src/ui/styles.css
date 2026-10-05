@@ -1723,6 +1723,216 @@ body {
   font-size: 10px;
 }
 
+.facet-panel {
+  margin: -5px 0 15px;
+  border: 1px solid #ecefe9;
+  border-radius: 7px;
+  background: #fbfcfa;
+  color: #5c695e;
+  font-size: 10px;
+}
+
+.facet-panel > summary {
+  min-height: 36px;
+  padding: 10px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 650;
+  list-style-position: inside;
+}
+
+.facet-active-count {
+  color: #57745c;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.facet-controls {
+  padding: 4px 11px 11px;
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.facet-controls > label:not(.facet-completed-toggle) {
+  min-width: min(180px, 100%);
+  display: grid;
+  gap: 4px;
+  color: #818a81;
+  font-size: 9px;
+}
+
+.facet-controls select {
+  min-height: 33px;
+  padding: 6px 8px;
+  border: 1px solid #e5e8e2;
+  border-radius: 6px;
+  color: #404b42;
+  background: #fff;
+  font-size: 10px;
+}
+
+.facet-completed-toggle {
+  min-height: 33px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #7a847b;
+  font-size: 9px;
+}
+
+.facet-completed-toggle input {
+  margin: 0;
+}
+
+.facet-clear {
+  margin-left: auto;
+}
+
+.remote-browser-tools {
+  margin: 0 0 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.remote-search {
+  min-width: 0;
+  flex: 1;
+}
+
+.dialog .remote-search input {
+  min-height: 33px;
+  padding: 6px 9px;
+}
+
+.remote-file-count {
+  flex: 0 0 auto;
+  color: #8b938b;
+  font-size: 9px;
+}
+
+.remote-file-list {
+  display: block;
+  max-height: 270px;
+  padding: 4px 8px;
+}
+
+.server-file-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.server-file-tree .server-file-tree {
+  margin-left: 13px;
+  padding-left: 8px;
+  border-left: 1px solid #edf0ea;
+}
+
+.server-file-tree details > summary {
+  min-height: 31px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #556459;
+  cursor: pointer;
+  font-size: 10px;
+  list-style: none;
+}
+
+.server-file-tree details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.folder-icon {
+  width: 12px;
+  color: #829982;
+  font-size: 11px;
+  transition: transform 0.12s;
+}
+
+.server-file-tree details[open] > summary .folder-icon {
+  transform: rotate(90deg);
+}
+
+.folder-count {
+  margin-left: auto;
+  color: #9aa19a;
+  font-size: 8px;
+}
+
+.server-file-tree-row {
+  min-height: 31px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid #f2f3f0;
+  color: #59655b;
+  font-size: 10px;
+}
+
+.server-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cached-server-note {
+  margin-top: -4px !important;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f4f7f2;
+}
+
+.auth-troubleshooting {
+  margin: 10px 0 0;
+  padding: 10px 11px;
+  border: 1px solid #eadfbe;
+  border-radius: 6px;
+  color: #76633c;
+  background: #fffaf0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.offline-banner {
+  margin: 12px 0;
+  padding: 9px 12px;
+  border: 1px solid #e7dfc8;
+  border-radius: 7px;
+  color: #776b4b;
+  background: #fffaf0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .facet-controls > label:not(.facet-completed-toggle) {
+    flex: 1 1 140px;
+  }
+
+  .remote-browser-tools {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .remote-file-count {
+    align-self: end;
+  }
+
+  .install-button {
+    display: none;
+  }
+}
+
 @media (max-width: 720px) {
   .workspace {
     width: 94vw;

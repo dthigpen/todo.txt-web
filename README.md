@@ -18,7 +18,10 @@ The app starts in local mode and saves changes in your browser. Use **Files**
 to switch between documents, import a todo.txt file, or export the current
 file. Create additional lists there, or rename, delete, and export saved lists.
 Switch lists from **Current list** beside the task filters. The default
-document is `todo.txt`.
+document is `todo.txt`; the app remembers the last list you used. Install it
+from a supported browser to launch it like an app. Its static app shell is
+cached for offline startup, while your lists and edits are stored locally in
+the browser.
 
 ## Optional Plain File Server
 
@@ -31,8 +34,11 @@ main list picker.
 
 The app caches the current document locally and writes remote changes with
 `If-Match` using its latest ETag. If you go offline, edits stay saved in this
-browser and sync automatically when the server is reachable again. A sync
-indicator shows which lists are waiting. If another client changes a file
+browser and sync automatically when the server is reachable again. Previously
+selected server lists remain in the list switcher and can be viewed and edited
+from their saved device copies when offline or signed out. Those edits wait
+until you sign in and reconnect. A sync indicator shows which lists are
+waiting. If another client changes a file
 first, or a save response is lost during a connection drop, the app preserves
 your local copy and flags the conflict rather than silently overwriting the
 server version. **Review & resolve** loads the latest server copy and lets you
@@ -45,6 +51,10 @@ from either copy** is available, with a warning that it may restore intentional
 deletions. The resolved version syncs using the server's latest ETag. Use
 HTTPS or a trusted private network for remote access. The login token is stored
 in this browser's localStorage; log out on shared devices.
+The server file browser has search and collapsible folders; only selected task
+lists appear in the main list switcher. Login errors caused by mixed content,
+untrusted HTTPS certificates, or CORS include troubleshooting hints. CORS must
+allow the deployed app's exact GitHub Pages origin.
 
 ## Scripts
 

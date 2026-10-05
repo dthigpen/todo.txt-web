@@ -62,6 +62,20 @@ Saving composes a valid interoperable line.
 - Keep a durable per-file queue of remote edits in browser storage when the
   server is unavailable. Retry when connectivity returns; show pending-sync
   state and never retry a stale write after a 412 without user review.
+- Remember the last selected local or server list across visits. Keep known
+  server paths and selected task lists locally so previously opened server
+  lists remain visible and editable from their cached copies while offline or
+  signed out. Never imply that an uncached server file is available offline.
+- Cache the static app shell as an installable PWA, but do not cache API
+  responses or server task data in the service worker. Document data remains
+  under browser storage and the existing sync queue.
+- Keep project/context facets near the task list rather than in a long
+  sidebar. Derive filter options from open tasks by default, with an explicit
+  option to include completed-task tags.
+- Make the server file browser searchable and group paths into collapsible
+  folders so a large readable directory is navigable.
+- Explain likely browser-side sign-in failures (mixed content, HTTPS trust,
+  CORS, and server reachability) instead of presenting a generic fetch error.
 - For a server conflict, fetch the latest server version and let users keep
   either full copy or select individual tasks from both copies into a merge.
   Compare against the last common saved content to identify added and removed
@@ -87,9 +101,12 @@ Mutations serialize one task per line with a final newline when nonempty.
 
 - Preact with Signals for the small reactive UI.
 - Vite for development/build, with relative asset paths for GitHub Pages.
-- LocalStorage for lightweight browser-only document/config persistence.
+- LocalStorage for lightweight browser-only document/config persistence,
+  including last-list selection and known server paths.
 - Plain File Server REST API as an optional backend, using `GET /api/files`,
   `GET /api/files/{path}`, `PUT /api/files/{path}`, login JWTs, and ETags.
+- A small same-origin service worker caches only the static application shell
+  and assets; it does not cache server API responses or task data.
 - ESLint, Prettier, and Node's built-in test runner; GitHub Actions builds and
   publishes the static site to GitHub Pages.
 

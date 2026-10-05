@@ -13,6 +13,8 @@ import {
 import { createMergeRows, serializeMergeRows } from "../conflictMerge.js";
 import { settlePendingWrite } from "../syncQueue.js";
 import { listFiles, login, readFile, writeFile } from "../server.js";
+import { loadLastList, saveLastList } from "../lastList.js";
+import { buildServerFileTree, countServerFiles } from "../serverFileTree.js";
 
 const DOCS_KEY = "todo-txt-web.documents";
 const SETTINGS_KEY = "todo-txt-web.server";
@@ -20,13 +22,54 @@ const PENDING_KEY = "todo-txt-web.pending-sync";
 const ETAGS_KEY = "todo-txt-web.server-etags";
 const storageError = signal("");
 const storageErrorDismissed = signal(false);
-const currentKey = signal("local:todo.txt");
 const documents = signal(loadDocuments());
 const serverSettings = signal(loadServerSettings());
+const currentKey = signal(loadCurrentKey());
 const pendingQueue = signal(loadPendingQueue());
 const serverEtags = signal(loadStoredObject(ETAGS_KEY));
-const activeRemotePath = signal("");
-const remoteState = signal({ etag: null });
+const activeRemotePath = signal(
+  getRemotePath(currentKey.value, serverSettings.value.base),
+);
+const remoteState = signal({
+  etag:
+    pendingQueue.value[currentKey.value]?.etag ??
+    serverEtags.value[currentKey.value] ??
+    null,
+});
+
+function loadCurrentKey() {
+  try {
+    const saved = loadLastList(localStorage, "local:todo.txt");
+    const isLocalList = saved.startsWith("local:");
+    const isKnownRemoteList =
+      getRemotePath(saved, serverSettings.value.base).length > 0;
+    return documents.value[saved] !== undefined &&
+      (isLocalList || isKnownRemoteList)
+      ? saved
+      : "local:todo.txt";
+  } catch (error) {
+    reportStorageError(
+      `Could not restore the last open list: ${error.message}.`,
+    );
+    return "local:todo.txt";
+  }
+}
+
+function getRemotePath(key, base) {
+  const prefix = base ? `server:${base.replace(/\/+$/, "")}:` : "";
+  return prefix && key.startsWith(prefix) ? key.slice(prefix.length) : "";
+}
+
+function selectCurrentKey(key) {
+  currentKey.value = key;
+  try {
+    saveLastList(localStorage, key);
+  } catch (error) {
+    reportStorageError(
+      `Could not remember the current list: ${error.message}.`,
+    );
+  }
+}
 
 function loadStoredObject(key) {
   try {
@@ -151,6 +194,8 @@ function App() {
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [contextFilter, setContextFilter] = useState("");
+  const [includeCompletedFacets, setIncludeCompletedFacets] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [conflictDialogKey, setConflictDialogKey] = useState("");
   const [editorTask, setEditorTask] = useState(null);
@@ -159,8 +204,13 @@ function App() {
   const [queueRevision, setQueueRevision] = useState(0);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [notice, setNotice] = useState("");
-  const [serverFiles, setServerFiles] = useState([]);
+  const [serverFiles, setServerFiles] = useState(
+    Array.isArray(serverSettings.value.knownFiles)
+      ? serverSettings.value.knownFiles
+      : [],
+  );
   const [serverError, setServerError] = useState("");
+  const [authHint, setAuthHint] = useState("");
   const [busy, setBusy] = useState(false);
   const [newFileName, setNewFileName] = useState("");
   const [quickDescription, setQuickDescription] = useState("");
@@ -186,6 +236,16 @@ function App() {
       refreshServerFiles();
       Object.keys(pendingQueue.value).forEach((key) => syncPending(key));
     }
+  }, []);
+
+  useEffect(() => {
+    function handleInstallPrompt(event) {
+      event.preventDefault();
+      setInstallPrompt(event);
+    }
+    window.addEventListener("beforeinstallprompt", handleInstallPrompt);
+    return () =>
+      window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
   }, []);
 
   useEffect(() => {
@@ -240,9 +300,14 @@ function App() {
 
   async function refreshServerFiles() {
     try {
-      setServerFiles(
-        await listFiles(serverSettings.value.base, serverSettings.value.token),
+      const files = await listFiles(
+        serverSettings.value.base,
+        serverSettings.value.token,
       );
+      setServerFiles(files);
+      const nextSettings = { ...serverSettings.value, knownFiles: files };
+      serverSettings.value = nextSettings;
+      saveSettings(nextSettings);
       setIsOnline(true);
       setServerError("");
     } catch (error) {
@@ -407,6 +472,13 @@ function App() {
     setSettingsOpen(true);
   }
 
+  async function installApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+  }
+
   function addTask(event) {
     event.preventDefault();
     const input = new FormData(event.currentTarget)
@@ -475,7 +547,7 @@ function App() {
       saveDocuments(next);
       setDocumentRevision((revision) => revision + 1);
     }
-    currentKey.value = key;
+    selectCurrentKey(key);
     activeRemotePath.value = "";
     remoteState.value = { etag: null };
     setNewFileName("");
@@ -535,7 +607,7 @@ function App() {
     documents.value = next;
     saveDocuments(next);
     setDocumentRevision((revision) => revision + 1);
-    if (currentKey.value === key) currentKey.value = newKey;
+    if (currentKey.value === key) selectCurrentKey(newKey);
     if (exportKey === key) setExportKey(newKey);
     setNotice(`Renamed to ${newName}`);
   }
@@ -562,7 +634,7 @@ function App() {
       remainingLocalFiles.push("local:todo.txt");
     }
     if (currentKey.value === key) {
-      currentKey.value = remainingLocalFiles[0] || "local:todo.txt";
+      selectCurrentKey(remainingLocalFiles[0] || "local:todo.txt");
     }
     if (exportKey === key) setExportKey(currentKey.value);
     setNotice(
@@ -601,6 +673,11 @@ function App() {
         base: apiBase.replace(/\/+$/, ""),
         username,
         token: result.token,
+        knownFiles:
+          serverSettings.value.base?.replace(/\/+$/, "") ===
+          apiBase.replace(/\/+$/, "")
+            ? serverSettings.value.knownFiles || []
+            : [],
         selectedFiles:
           serverSettings.value.base?.replace(/\/+$/, "") ===
           apiBase.replace(/\/+$/, "")
@@ -610,28 +687,41 @@ function App() {
       serverSettings.value = next;
       saveSettings(next);
       setPassword("");
+      setAuthHint("");
       await refreshServerFiles();
       retryFailedSyncs();
       setNotice("Connected to Plain File Server");
     } catch (error) {
-      setServerError(`Could not sign in: ${error.message}`);
+      if (error instanceof TypeError) {
+        const isMixedContent =
+          window.location.protocol === "https:" && /^http:/i.test(apiBase);
+        setAuthHint(
+          isMixedContent
+            ? "The app is loaded over HTTPS but this API URL uses HTTP. Browsers block that request as mixed content; use the server's HTTPS URL."
+            : `The browser could not read a response from the server. Check that this device can reach the API and trusts its HTTPS certificate. If CORS is enabled, allow origin ${window.location.origin}, OPTIONS and GET/POST/PUT, request headers Authorization/Content-Type/If-Match, and expose the ETag response header.`,
+        );
+        setServerError("");
+      } else {
+        setAuthHint("");
+        setServerError(`Could not sign in: ${error.message}`);
+      }
     } finally {
       setBusy(false);
     }
   }
 
   function disconnect() {
-    if (activeRemotePath.value) currentKey.value = "local:todo.txt";
     if (exportKey.startsWith("server:")) setExportKey("local:todo.txt");
     serverSettings.value = {
       ...serverSettings.value,
       token: undefined,
     };
     saveSettings(serverSettings.value);
-    activeRemotePath.value = "";
-    remoteState.value = { etag: null };
-    setServerFiles([]);
-    setNotice("Disconnected");
+    setNotice(
+      activeRemotePath.value
+        ? "Signed out. This server list remains available from its saved copy."
+        : "Disconnected",
+    );
   }
 
   async function openRemote(path = remotePathInput) {
@@ -647,39 +737,70 @@ function App() {
       );
       return;
     }
-    setBusy(true);
-    setServerError("");
+    if (!serverSettings.value.base) {
+      setServerError("Connect to a server before opening a server path.");
+      return;
+    }
     const base = serverSettings.value.base.replace(/\/+$/, "");
     const key = fileKey(base, cleanPath);
     const queued = pendingQueue.value[key];
-    try {
-      let content;
-      let etag;
-      if (queued) {
-        content = queued.content;
-        etag = queued.etag;
-      } else {
-        const result = await readFile(
-          base,
-          serverSettings.value.token,
-          cleanPath,
+    const cachedContent = documents.value[key];
+
+    if (queued || !serverSettings.value.token || !navigator.onLine) {
+      if (!queued && cachedContent === undefined) {
+        setServerError(
+          `No saved copy of ${cleanPath} is on this device yet. Connect to the server once while online to download it.`,
         );
-        content = result.content;
-        etag = result.exists
-          ? result.etag || serverEtags.value[key] || null
-          : null;
-        if (!result.exists && serverEtags.value[key]) {
-          const nextEtags = { ...serverEtags.value };
-          delete nextEtags[key];
-          serverEtags.value = nextEtags;
-          persistObject(ETAGS_KEY, nextEtags);
-        }
+        return;
+      }
+      selectCurrentKey(key);
+      activeRemotePath.value = cleanPath;
+      remoteState.value = {
+        etag: queued?.etag ?? serverEtags.value[key] ?? null,
+      };
+      setRemotePathInput(cleanPath);
+      const selectedFiles = new Set(serverSettings.value.selectedFiles || []);
+      selectedFiles.add(cleanPath);
+      const nextSettings = {
+        ...serverSettings.value,
+        selectedFiles: [...selectedFiles].sort(),
+      };
+      serverSettings.value = nextSettings;
+      saveSettings(nextSettings);
+      setIsOnline(navigator.onLine);
+      setServerError("");
+      setNotice(
+        queued
+          ? `Opened local changes for ${cleanPath}`
+          : `Opened the saved copy of ${cleanPath}`,
+      );
+      setSettingsOpen(false);
+      return;
+    }
+
+    setBusy(true);
+    setServerError("");
+    try {
+      const result = await readFile(
+        base,
+        serverSettings.value.token,
+        cleanPath,
+      );
+      const content = result.content;
+      const etag = result.exists
+        ? result.etag || serverEtags.value[key] || null
+        : null;
+      if (!result.exists && serverEtags.value[key]) {
+        const nextEtags = { ...serverEtags.value };
+        delete nextEtags[key];
+        serverEtags.value = nextEtags;
+        persistObject(ETAGS_KEY, nextEtags);
       }
       const next = { ...documents.value, [key]: content };
       documents.value = next;
       saveDocuments(next);
       setDocumentRevision((revision) => revision + 1);
-      currentKey.value = key;
+      selectCurrentKey(key);
       activeRemotePath.value = cleanPath;
       remoteState.value = { etag };
       setRemotePathInput(cleanPath);
@@ -696,33 +817,45 @@ function App() {
         serverEtags.value = nextEtags;
         persistObject(ETAGS_KEY, nextEtags);
       }
-      setNotice(
-        queued
-          ? `Opened local changes for ${cleanPath}`
-          : `Opened ${cleanPath}`,
-      );
+      setIsOnline(true);
+      setServerError("");
+      setNotice(`Opened ${cleanPath}`);
       setSettingsOpen(false);
     } catch (error) {
-      if (error instanceof TypeError || !navigator.onLine) {
-        const cached = key in documents.value ? documents.value[key] : "";
+      if (
+        error instanceof TypeError ||
+        !navigator.onLine ||
+        ((error.status === 401 || error.status === 403) &&
+          cachedContent !== undefined)
+      ) {
+        if (cachedContent === undefined) {
+          setServerError(`Could not open ${cleanPath}: ${error.message}`);
+          return;
+        }
         const cachedEtag = serverEtags.value[key] || null;
-        const next = { ...documents.value, [key]: cached };
-        documents.value = next;
-        saveDocuments(next);
-        setDocumentRevision((revision) => revision + 1);
-        currentKey.value = key;
+        selectCurrentKey(key);
         activeRemotePath.value = cleanPath;
         remoteState.value = { etag: cachedEtag };
-        const selectedFiles = new Set(serverSettings.value.selectedFiles || []);
-        selectedFiles.add(cleanPath);
-        const nextSettings = {
-          ...serverSettings.value,
-          selectedFiles: [...selectedFiles].sort(),
-        };
-        serverSettings.value = nextSettings;
-        saveSettings(nextSettings);
-        setIsOnline(false);
-        setNotice(`Opened the saved copy of ${cleanPath}`);
+        if (error.status === 401) {
+          serverSettings.value = {
+            ...serverSettings.value,
+            token: undefined,
+          };
+          saveSettings(serverSettings.value);
+        }
+        setIsOnline(
+          error.status === 401 || error.status === 403
+            ? navigator.onLine
+            : false,
+        );
+        setServerError("");
+        setNotice(
+          error.status === 401
+            ? `Opened the saved copy of ${cleanPath}; sign in again to sync changes`
+            : error.status === 403
+              ? `Opened the saved copy of ${cleanPath}; the server denied access`
+              : `Opened the saved copy of ${cleanPath}`,
+        );
       } else {
         setServerError(`Could not open ${cleanPath}: ${error.message}`);
       }
@@ -734,23 +867,34 @@ function App() {
   function switchFile(key) {
     if (!key || key === currentKey.value) return;
     if (key.startsWith("local:")) {
-      currentKey.value = key;
+      selectCurrentKey(key);
       activeRemotePath.value = "";
       remoteState.value = { etag: null };
       setNotice(`Opened ${key.replace(/^local:/, "")}`);
       return;
     }
     const prefix = `server:${serverSettings.value.base?.replace(/\/+$/, "")}:`;
-    if (!serverSettings.value.token || !key.startsWith(prefix)) {
-      setServerError("Sign in to the server to open this list.");
+    if (!serverSettings.value.base || !key.startsWith(prefix)) {
+      setServerError("This list belongs to a different server connection.");
       return;
     }
     openRemote(key.slice(prefix.length));
   }
 
   const allTasks = sortTasks(tasks);
-  const projects = [...new Set(tasks.flatMap((task) => task.projects))].sort();
-  const contexts = [...new Set(tasks.flatMap((task) => task.contexts))].sort();
+  const facetTasks = includeCompletedFacets
+    ? tasks
+    : tasks.filter((task) => !task.completed);
+  const projects = [
+    ...new Set(facetTasks.flatMap((task) => task.projects)),
+  ].sort();
+  const contexts = [
+    ...new Set(facetTasks.flatMap((task) => task.contexts)),
+  ].sort();
+  const projectCount = (project) =>
+    facetTasks.filter((task) => task.projects.includes(project)).length;
+  const contextCount = (context) =>
+    facetTasks.filter((task) => task.contexts.includes(context)).length;
   const visibleTasks = allTasks.filter((task) => {
     if (filter === "open" && task.completed) return false;
     if (filter === "done" && !task.completed) return false;
@@ -808,7 +952,7 @@ function App() {
       key,
       label: key.replace(/^local:/, ""),
     })),
-    ...(serverSettings.value.token
+    ...(serverSettings.value.base
       ? [
           ...new Set(
             [...selectedServerFiles, activeRemotePath.value].filter(Boolean),
@@ -843,11 +987,21 @@ function App() {
             {activeRemotePath.value && pendingQueue.value[currentKey.value]
               ? "Changes queued"
               : activeRemotePath.value
-                ? "Server file"
+                ? !isOnline || !serverSettings.value.token
+                  ? "Saved on this device"
+                  : "Server file"
                 : storageError.value
                   ? "Browser save issue"
                   : "Saved in this browser"}
           </span>
+          {installPrompt && (
+            <button
+              class="button button-secondary install-button"
+              onClick={installApp}
+            >
+              Install
+            </button>
+          )}
           <button
             class="button button-quiet"
             onClick={() => {
@@ -873,6 +1027,13 @@ function App() {
           >
             ×
           </button>
+        </div>
+      )}
+
+      {!isOnline && unsyncedEntries.length === 0 && (
+        <div class="offline-banner" role="status">
+          You’re offline. This app and your saved lists are available on this
+          device; remote changes will sync after you reconnect.
         </div>
       )}
 
@@ -935,7 +1096,9 @@ function App() {
             </select>
             <span class="file-location">
               {activeRemotePath.value
-                ? "Plain File Server"
+                ? isOnline && serverSettings.value.token
+                  ? "Plain File Server"
+                  : "Plain File Server · saved on this device"
                 : "Saved in this browser"}
             </span>
             <div class="sidebar-rule" />
@@ -960,53 +1123,6 @@ function App() {
               ))}
             </nav>
             <div class="sidebar-rule" />
-            <div class="file-caption">PROJECTS</div>
-            <p class="tag-help">
-              Group tasks by a goal or area, like <code>+garden</code>.
-            </p>
-            <div class="tag-list">
-              {projects.map((project) => (
-                <button
-                  class={`side-tag ${projectFilter === project ? "tag-selected" : ""}`}
-                  onClick={() =>
-                    setProjectFilter(projectFilter === project ? "" : project)
-                  }
-                  key={project}
-                >
-                  <span class="project-hash">+</span>
-                  {project}
-                </button>
-              ))}
-              {!projects.length && (
-                <span class="empty-tag">
-                  Add a project to a task to see it here.
-                </span>
-              )}
-            </div>
-            <div class="sidebar-rule" />
-            <div class="file-caption">CONTEXTS</div>
-            <p class="tag-help">
-              Where or how you can do it, like <code>@phone</code>.
-            </p>
-            <div class="tag-list">
-              {contexts.map((context) => (
-                <button
-                  class={`side-tag ${contextFilter === context ? "tag-selected" : ""}`}
-                  onClick={() =>
-                    setContextFilter(contextFilter === context ? "" : context)
-                  }
-                  key={context}
-                >
-                  <span class="context-at">@</span>
-                  {context}
-                </button>
-              ))}
-              {!contexts.length && (
-                <span class="empty-tag">
-                  Add a context to a task to see it here.
-                </span>
-              )}
-            </div>
           </aside>
 
           <section class="task-area">
@@ -1056,6 +1172,72 @@ function App() {
                 Add with details
               </button>
             </form>
+
+            <details class="facet-panel">
+              <summary>
+                <span>Filter by project or context</span>
+                {(projectFilter || contextFilter) && (
+                  <span class="facet-active-count">
+                    {(projectFilter ? 1 : 0) + (contextFilter ? 1 : 0)} active
+                  </span>
+                )}
+              </summary>
+              <div class="facet-controls">
+                <label>
+                  <span>Project</span>
+                  <select
+                    value={projectFilter}
+                    onChange={(event) =>
+                      setProjectFilter(event.currentTarget.value)
+                    }
+                  >
+                    <option value="">All projects</option>
+                    {projects.map((project) => (
+                      <option value={project} key={project}>
+                        +{project} ({projectCount(project)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Context</span>
+                  <select
+                    value={contextFilter}
+                    onChange={(event) =>
+                      setContextFilter(event.currentTarget.value)
+                    }
+                  >
+                    <option value="">All contexts</option>
+                    {contexts.map((context) => (
+                      <option value={context} key={context}>
+                        @{context} ({contextCount(context)})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label class="facet-completed-toggle">
+                  <input
+                    type="checkbox"
+                    checked={includeCompletedFacets}
+                    onChange={(event) =>
+                      setIncludeCompletedFacets(event.currentTarget.checked)
+                    }
+                  />
+                  Include completed-task tags
+                </label>
+                {(projectFilter || contextFilter) && (
+                  <button
+                    class="text-button facet-clear"
+                    onClick={() => {
+                      setProjectFilter("");
+                      setContextFilter("");
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            </details>
 
             {(projectFilter || contextFilter) && (
               <div class="active-filters">
@@ -1246,6 +1428,7 @@ function App() {
           setUsername={setUsername}
           password={password}
           setPassword={setPassword}
+          authHint={authHint}
           connect={connect}
           disconnect={disconnect}
           settings={serverSettings.value}
@@ -1266,8 +1449,12 @@ function App() {
         <TaskDialog
           task={editorTask}
           initialDescription={quickDescription}
-          projects={projects}
-          contexts={contexts}
+          allProjects={[
+            ...new Set(tasks.flatMap((task) => task.projects)),
+          ].sort()}
+          allContexts={[
+            ...new Set(tasks.flatMap((task) => task.contexts)),
+          ].sort()}
           metadataSuggestions={tasks.flatMap((task) =>
             task.metadata
               .filter((item) => item.key.toLowerCase() !== "due")
@@ -1658,6 +1845,7 @@ function FilesDialog(props) {
     setUsername,
     password,
     setPassword,
+    authHint,
     connect,
     disconnect,
     settings,
@@ -1672,6 +1860,11 @@ function FilesDialog(props) {
     busy,
     refreshServerFiles,
   } = props;
+  const [serverSearch, setServerSearch] = useState("");
+  const serverTree = useMemo(
+    () => buildServerFileTree(serverFiles, serverSearch),
+    [serverFiles, serverSearch],
+  );
 
   return (
     <div
@@ -1809,49 +2002,64 @@ function FilesDialog(props) {
             Connect to your server to work with files wherever you can log in.
           </p>
           {!settings.token ? (
-            <form class="server-form" onSubmit={connect}>
-              <label class="field-label" for="api-base">
-                API URL
-              </label>
-              <input
-                id="api-base"
-                type="url"
-                value={apiBase}
-                onInput={(event) => setApiBase(event.currentTarget.value)}
-                placeholder="https://files.example.com/api"
-                required
-              />
-              <div class="form-grid">
-                <label>
-                  <span class="field-label">Username</span>
-                  <input
-                    autocomplete="username"
-                    value={username}
-                    onInput={(event) => setUsername(event.currentTarget.value)}
-                    required
-                  />
+            <>
+              <p class="fine-print cached-server-note">
+                Previously opened server lists stay on this device and remain
+                editable while signed out or offline. Changes wait here until
+                you sign in and reconnect.
+              </p>
+              <form class="server-form" onSubmit={connect}>
+                <label class="field-label" for="api-base">
+                  API URL
                 </label>
-                <label>
-                  <span class="field-label">Password</span>
-                  <input
-                    type="password"
-                    autocomplete="current-password"
-                    value={password}
-                    onInput={(event) => setPassword(event.currentTarget.value)}
-                    required
-                  />
-                </label>
-              </div>
-              <button class="button button-primary" disabled={busy}>
-                {busy ? "Connecting…" : "Connect"}
-              </button>
-            </form>
+                <input
+                  id="api-base"
+                  type="url"
+                  value={apiBase}
+                  onInput={(event) => setApiBase(event.currentTarget.value)}
+                  placeholder="https://files.example.com/api"
+                  required
+                />
+                <div class="form-grid">
+                  <label>
+                    <span class="field-label">Username</span>
+                    <input
+                      autocomplete="username"
+                      value={username}
+                      onInput={(event) =>
+                        setUsername(event.currentTarget.value)
+                      }
+                      required
+                    />
+                  </label>
+                  <label>
+                    <span class="field-label">Password</span>
+                    <input
+                      type="password"
+                      autocomplete="current-password"
+                      value={password}
+                      onInput={(event) =>
+                        setPassword(event.currentTarget.value)
+                      }
+                      required
+                    />
+                  </label>
+                </div>
+                <button class="button button-primary" disabled={busy}>
+                  {busy ? "Connecting…" : "Connect"}
+                </button>
+              </form>
+            </>
           ) : (
             <div class="server-connected">
               <div class="connected-note">
                 <span class="status-dot" /> Signed in as{" "}
                 <strong>{settings.username}</strong>
               </div>
+              <p class="fine-print session-note">
+                This browser keeps its own sign-in token; signing in on another
+                device does not replace this device's saved lists.
+              </p>
               <div class="section-title-row">
                 <span class="field-label">
                   Choose the files that contain tasks
@@ -1864,29 +2072,37 @@ function FilesDialog(props) {
                 Only selected files appear in Current list. You can also enter
                 another path below.
               </p>
+              <div class="remote-browser-tools">
+                <label class="remote-search">
+                  <span class="visually-hidden">Search server files</span>
+                  <input
+                    type="search"
+                    value={serverSearch}
+                    onInput={(event) =>
+                      setServerSearch(event.currentTarget.value)
+                    }
+                    placeholder="Search files and folders"
+                  />
+                </label>
+                <span class="remote-file-count">
+                  {countServerFiles(serverTree)} shown ·{" "}
+                  {selectedServerFiles.length} in your lists
+                </span>
+              </div>
               <div class="saved-file-list remote-file-list">
-                {serverFiles.length ? (
-                  serverFiles.map((path) => (
-                    <div class="saved-file-row" key={path}>
-                      <span class="saved-file-name">{path}</span>
-                      <label class="file-selection">
-                        <input
-                          type="checkbox"
-                          checked={selectedServerFiles.includes(path)}
-                          onChange={(event) =>
-                            toggleServerFile(path, event.currentTarget.checked)
-                          }
-                        />
-                        <span>
-                          {selectedServerFiles.includes(path)
-                            ? "In my lists"
-                            : "Add to lists"}
-                        </span>
-                      </label>
-                    </div>
-                  ))
+                {serverTree.length ? (
+                  <ServerFileTree
+                    nodes={serverTree}
+                    selectedFiles={selectedServerFiles}
+                    onToggle={toggleServerFile}
+                    expandMatches={Boolean(serverSearch.trim())}
+                  />
                 ) : (
-                  <span class="fine-print">No readable files listed yet.</span>
+                  <span class="fine-print">
+                    {serverFiles.length
+                      ? "No files match that search."
+                      : "No readable files listed yet."}
+                  </span>
                 )}
               </div>
               <form
@@ -1919,6 +2135,11 @@ function FilesDialog(props) {
               {serverError || storageError}
             </p>
           )}
+          {authHint && (
+            <p class="auth-troubleshooting" role="status">
+              {authHint}
+            </p>
+          )}
           <p class="fine-print security-note">
             Your server login token is kept in this browser's local storage.
             Sign out on shared devices. Use HTTPS or a trusted private network.
@@ -1935,11 +2156,73 @@ function FilesDialog(props) {
   );
 }
 
+function ServerFileTree({ nodes, selectedFiles, onToggle, expandMatches }) {
+  const directories = nodes.filter((node) => node.type === "directory");
+  const files = nodes.filter((node) => node.type === "file");
+  const renderFile = (node) => (
+    <li class="server-file-tree-row" key={node.path}>
+      <span class="server-file-name" title={node.path}>
+        {node.name}
+      </span>
+      <label class="file-selection">
+        <input
+          type="checkbox"
+          checked={selectedFiles.includes(node.path)}
+          onChange={(event) => onToggle(node.path, event.currentTarget.checked)}
+        />
+        <span>{selectedFiles.includes(node.path) ? "In my lists" : "Add"}</span>
+      </label>
+    </li>
+  );
+
+  return (
+    <ul class="server-file-tree">
+      {directories.map((node) => (
+        <li key={node.path}>
+          <details open={expandMatches || undefined}>
+            <summary>
+              <span class="folder-icon" aria-hidden="true">
+                ▸
+              </span>
+              <span>{node.name}</span>
+              <span class="folder-count">
+                {countServerFiles(node.children)}
+              </span>
+            </summary>
+            <ServerFileTree
+              nodes={node.children}
+              selectedFiles={selectedFiles}
+              onToggle={onToggle}
+              expandMatches={expandMatches}
+            />
+          </details>
+        </li>
+      ))}
+      {files.length > 20 ? (
+        <li>
+          <details open={expandMatches || undefined}>
+            <summary>
+              <span class="folder-icon" aria-hidden="true">
+                ▸
+              </span>
+              <span>Files in this folder</span>
+              <span class="folder-count">{files.length}</span>
+            </summary>
+            <ul class="server-file-tree">{files.map(renderFile)}</ul>
+          </details>
+        </li>
+      ) : (
+        files.map(renderFile)
+      )}
+    </ul>
+  );
+}
+
 function TaskDialog({
   task,
   initialDescription,
-  projects,
-  contexts,
+  allProjects,
+  allContexts,
   metadataSuggestions,
   onClose,
   onSave,
@@ -2093,7 +2376,7 @@ function TaskDialog({
             label="Projects"
             prefix="+"
             values={draft.projects}
-            suggestions={projects}
+            suggestions={allProjects}
             description="Group related tasks, such as a trip, a home project, or a goal."
             placeholder="Type a project and press Enter"
             onChange={(value) => editField("projects", value)}
@@ -2102,7 +2385,7 @@ function TaskDialog({
             label="Contexts"
             prefix="@"
             values={draft.contexts}
-            suggestions={contexts}
+            suggestions={allContexts}
             description="A context is where or how you can act: @home, @phone, @computer."
             placeholder="Type a context and press Enter"
             onChange={(value) => editField("contexts", value)}
