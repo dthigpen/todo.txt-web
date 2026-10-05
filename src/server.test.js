@@ -19,7 +19,7 @@ test("reads a server file using its logical path and captures its ETag", async (
     );
     assert.equal(
       requestUrl,
-      "https://files.example/api/files/household/todo%20list.txt",
+      "https://files.example/api/v1/files/household/todo%20list.txt",
     );
     assert.deepEqual(result, {
       content: "task\n",
@@ -46,6 +46,7 @@ test("updates a remote file conditionally with its current ETag", async () => {
       "new task\n",
       '"current-etag"',
     );
+    assert.equal(request.url, "https://files.example/api/v1/files/todo.txt");
     assert.equal(request.options.method, "PUT");
     assert.equal(request.options.headers["If-Match"], '"current-etag"');
     assert.equal(request.options.body, "new task\n");

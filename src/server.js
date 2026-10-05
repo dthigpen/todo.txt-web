@@ -1,5 +1,9 @@
 function apiUrl(base, endpoint) {
-  return `${base.replace(/\/+$/, "")}${endpoint}`;
+  const normalizedBase = base.replace(/\/+$/, "");
+  const versionedBase = normalizedBase.endsWith("/api")
+    ? `${normalizedBase}/v1`
+    : normalizedBase;
+  return `${versionedBase}${endpoint}`;
 }
 
 function headers(token, extras = {}) {
