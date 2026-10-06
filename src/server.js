@@ -59,17 +59,26 @@ function pathUrl(base, path) {
   return apiUrl(base, `/files/${encoded}`);
 }
 
-export async function readFile(base, token, path) {
+export async function readFile(base, token, path, etag) {
   const response = await fetch(pathUrl(base, path), {
-    headers: headers(token),
+    headers: headers(token, etag ? { "If-None-Match": etag } : {}),
   });
+  if (response.status === 304) {
+    return {
+      content: null,
+      etag: response.headers.get("ETag") || etag || null,
+      exists: true,
+      unchanged: true,
+    };
+  }
   if (response.status === 404)
-    return { content: "", etag: null, exists: false };
+    return { content: "", etag: null, exists: false, unchanged: false };
   await checked(response);
   return {
     content: await response.text(),
     etag: response.headers.get("ETag"),
     exists: true,
+    unchanged: false,
   };
 }
 

@@ -16,7 +16,7 @@ import {
   today,
 } from "../todoTxt.js";
 import { createMergeRows, serializeMergeRows } from "../conflictMerge.js";
-import { settlePendingWrite } from "../syncQueue.js";
+import { classifyRemoteContent, settlePendingWrite } from "../syncQueue.js";
 import { listFiles, login, readFile, writeFile } from "../server.js";
 import { loadLastList, saveLastList } from "../lastList.js";
 import { buildServerFileTree, countServerFiles } from "../serverFileTree.js";
@@ -234,6 +234,7 @@ function App() {
   const undoActionRef = useRef(null);
   const undoTimer = useRef(null);
   const syncBusy = useRef(new Set());
+  const remoteRefreshBusy = useRef(false);
   const quickAddRef = useRef(null);
   const tasks = useMemo(
     () => parseDocument(documentContent(currentKey.value)),
@@ -243,7 +244,6 @@ function App() {
   useEffect(() => {
     if (serverSettings.value.token) {
       refreshServerFiles();
-      Object.keys(pendingQueue.value).forEach((key) => syncPending(key));
     }
   }, []);
 
@@ -278,19 +278,22 @@ function App() {
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      Object.keys(pendingQueue.value).forEach((key) => syncPending(key));
+      refreshKnownRemoteFiles();
     };
     const handleOffline = () => setIsOnline(false);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refreshKnownRemoteFiles();
+    };
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
-    const retry = window.setInterval(() => {
-      if (navigator.onLine) {
-        Object.keys(pendingQueue.value).forEach((key) => syncPending(key));
-      }
-    }, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const retry = window.setInterval(refreshWhenVisible, 60_000);
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.clearInterval(retry);
     };
   }, []);
@@ -319,9 +322,7 @@ function App() {
   useEffect(() => {
     if (!isOnline) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      Object.keys(pendingQueue.value).forEach((key) => syncPending(key));
-    }, 500);
+    saveTimer.current = setTimeout(refreshKnownRemoteFiles, 500);
     return () => clearTimeout(saveTimer.current);
   }, [queueRevision, isOnline]);
 
@@ -386,12 +387,160 @@ function App() {
       saveSettings(nextSettings);
       setIsOnline(true);
       setServerError("");
+      await refreshKnownRemoteFiles();
     } catch (error) {
       if (error instanceof TypeError || !navigator.onLine) {
         setIsOnline(false);
       } else {
         setServerError(error.message);
       }
+    }
+  }
+
+  async function refreshKnownRemoteFiles() {
+    const base = serverSettings.value.base?.replace(/\/+$/, "");
+    const token = serverSettings.value.token;
+    if (!base || !token || !navigator.onLine || remoteRefreshBusy.current) {
+      return;
+    }
+
+    remoteRefreshBusy.current = true;
+    const prefix = `server:${base}:`;
+    const keys = [
+      ...new Set([
+        ...Object.keys(documents.value),
+        ...Object.keys(pendingQueue.value),
+      ]),
+    ].filter((key) => key.startsWith(prefix) && getRemotePath(key, base));
+    const updatedPaths = [];
+    try {
+      for (const key of keys) {
+        if (syncBusy.current.has(key)) continue;
+        if (key === currentKey.value && taskDialogOpen) continue;
+        syncBusy.current.add(key);
+        const path = getRemotePath(key, base);
+        const knownQueue = pendingQueue.value[key];
+        const knownEtag = knownQueue?.etag ?? serverEtags.value[key] ?? null;
+        try {
+          const remote = await readFile(base, token, path, knownEtag);
+          setIsOnline(true);
+          if (key === currentKey.value && taskDialogOpen) continue;
+          const localContent = documentContent(key);
+          const queued = pendingQueue.value[key];
+          const action = classifyRemoteContent(localContent, queued, remote);
+          const currentEtag = remote.etag || knownEtag;
+
+          if (action === "unchanged") {
+            if (currentEtag && currentEtag !== serverEtags.value[key]) {
+              const nextEtags = {
+                ...serverEtags.value,
+                [key]: currentEtag,
+              };
+              serverEtags.value = nextEtags;
+              persistObject(ETAGS_KEY, nextEtags);
+            }
+            if (key === currentKey.value)
+              remoteState.value = { etag: currentEtag };
+            continue;
+          }
+
+          if (action === "fast-forward") {
+            const nextDocuments = {
+              ...documents.value,
+              [key]: remote.content,
+            };
+            documents.value = nextDocuments;
+            saveDocuments(nextDocuments);
+            setDocumentRevision((revision) => revision + 1);
+            if (undoActionRef.current?.key === key) clearUndoAction();
+            if (key === currentKey.value) updatedPaths.push(path);
+          }
+
+          if (action === "already-synced") {
+            const nextQueue = settlePendingWrite(
+              pendingQueue.value,
+              key,
+              remote.content,
+              currentEtag,
+            );
+            pendingQueue.value = nextQueue;
+            persistObject(PENDING_KEY, nextQueue, setQueueRevision);
+            if (key === currentKey.value)
+              remoteState.value = { etag: currentEtag };
+          } else if (action === "retry") {
+            if (queued.etag !== currentEtag || queued.status !== "pending") {
+              const nextQueue = {
+                ...pendingQueue.value,
+                [key]: {
+                  ...queued,
+                  etag: currentEtag,
+                  status: "pending",
+                },
+              };
+              pendingQueue.value = nextQueue;
+              persistObject(PENDING_KEY, nextQueue, setQueueRevision);
+            }
+          } else if (action === "conflict" || action === "deleted") {
+            if (queued?.status !== "conflict") {
+              const nextQueue = {
+                ...pendingQueue.value,
+                [key]: {
+                  ...(queued || {}),
+                  base,
+                  path,
+                  content: localContent,
+                  baseContent: queued?.baseContent ?? localContent,
+                  etag: knownEtag,
+                  status: "conflict",
+                },
+              };
+              pendingQueue.value = nextQueue;
+              persistObject(PENDING_KEY, nextQueue, setQueueRevision);
+            }
+          }
+
+          if (action === "deleted") {
+            const nextEtags = { ...serverEtags.value };
+            delete nextEtags[key];
+            serverEtags.value = nextEtags;
+            persistObject(ETAGS_KEY, nextEtags);
+          } else if (currentEtag) {
+            const nextEtags = { ...serverEtags.value, [key]: currentEtag };
+            serverEtags.value = nextEtags;
+            persistObject(ETAGS_KEY, nextEtags);
+          }
+          if (key === currentKey.value)
+            remoteState.value = {
+              etag: action === "deleted" ? null : currentEtag,
+            };
+        } catch (error) {
+          if (error instanceof TypeError || !navigator.onLine) {
+            setIsOnline(false);
+            break;
+          }
+          if (error.status === 401) {
+            setServerError(
+              "Your server sign-in expired. Sign in again to refresh lists.",
+            );
+            break;
+          }
+          setServerError(`Could not refresh ${path}: ${error.message}`);
+        } finally {
+          syncBusy.current.delete(key);
+        }
+      }
+      if (updatedPaths.length) {
+        setNotice(
+          updatedPaths.length === 1
+            ? `Updated ${updatedPaths[0]} from the server`
+            : `Updated ${updatedPaths.length} lists from the server`,
+        );
+      }
+      if (navigator.onLine) {
+        Object.keys(pendingQueue.value).forEach((key) => syncPending(key));
+      }
+    } finally {
+      remoteRefreshBusy.current = false;
     }
   }
 
@@ -803,7 +952,7 @@ function App() {
         setAuthHint(
           isMixedContent
             ? "The app is loaded over HTTPS but this API URL uses HTTP. Browsers block that request as mixed content; use the server's HTTPS URL."
-            : `The browser could not read a response from the server. Check that this device can reach the API and trusts its HTTPS certificate. If CORS is enabled, allow origin ${window.location.origin}, OPTIONS and GET/POST/PUT, request headers Authorization/Content-Type/If-Match, and expose the ETag response header.`,
+            : `The browser could not read a response from the server. Check that this device can reach the API and trusts its HTTPS certificate. If CORS is enabled, allow origin ${window.location.origin}, OPTIONS and GET/POST/PUT, request headers Authorization/Content-Type/If-Match/If-None-Match, and expose the ETag response header.`,
         );
         setServerError("");
       } else {

@@ -70,6 +70,11 @@ line.
 - Keep a durable per-file queue of remote edits in browser storage when the
   server is unavailable. Retry when connectivity returns; show pending-sync
   state and never retry a stale write after a 412 without user review.
+- While signed in, conditionally check cached remote documents on app start,
+  when the app regains focus/connectivity, and periodically while visible.
+  Fast-forward server changes when there are no local edits; otherwise compare
+  against the queued base and use the normal conflict resolver if both sides
+  changed. Do not poll files that have never been cached on this device.
 - Remember the last selected local or server list across visits. Keep known
   server paths and selected task lists locally so previously opened server
   lists remain visible and editable from their cached copies while offline or
@@ -84,6 +89,7 @@ line.
   folders so a large readable directory is navigable.
 - Explain likely browser-side sign-in failures (mixed content, HTTPS trust,
   CORS, and server reachability) instead of presenting a generic fetch error.
+  Cross-origin deployments must allow `If-None-Match` for conditional refresh.
 - For a server conflict, fetch the latest server version and let users keep
   either full copy or select individual tasks from both copies into a merge.
   Compare against the last common saved content to identify added and removed
@@ -124,7 +130,8 @@ Mutations serialize one task per line with a final newline when nonempty.
 - LocalStorage for lightweight browser-only document/config persistence,
   including last-list selection and known server paths.
 - Plain File Server REST API as an optional backend, using `GET /api/files`,
-  `GET /api/files/{path}`, `PUT /api/files/{path}`, login JWTs, and ETags.
+  conditional `GET /api/files/{path}` with `If-None-Match`,
+  `PUT /api/files/{path}` with `If-Match`, login JWTs, and ETags.
 - A small same-origin service worker caches only the static application shell
   and assets; it does not cache server API responses or task data.
 - ESLint, Prettier, and Node's built-in test runner; GitHub Actions builds and

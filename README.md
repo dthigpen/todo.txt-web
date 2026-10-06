@@ -34,8 +34,13 @@ which readable server files are task lists; other server files stay out of the
 main list picker.
 
 The app caches the current document locally and writes remote changes with
-`If-Match` using its latest ETag. If you go offline, edits stay saved in this
-browser and sync automatically when the server is reachable again. Previously
+`If-Match` using its latest ETag. While signed in, it checks cached server lists
+when opened, on reconnect or return to the tab, and periodically in the
+background using conditional ETag requests. Lists with no unsynced edits
+update in place when the server has newer content; overlapping changes keep
+both copies and appear in the existing conflict review. If you go offline,
+edits stay saved in this browser and sync automatically when the server is
+reachable again. Previously
 selected server lists remain in the list switcher and can be viewed and edited
 from their saved device copies when offline or signed out. Those edits wait
 until you sign in and reconnect. A sync indicator shows which lists are
@@ -56,7 +61,8 @@ in this browser's localStorage; log out on shared devices.
 The server file browser has search and collapsible folders; only selected task
 lists appear in the main list switcher. Login errors caused by mixed content,
 untrusted HTTPS certificates, or CORS include troubleshooting hints. CORS must
-allow the deployed app's exact GitHub Pages origin.
+allow the deployed app's exact GitHub Pages origin and the `If-None-Match`
+request header used for conditional refresh.
 
 ## Scripts
 

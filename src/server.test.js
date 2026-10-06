@@ -25,6 +25,7 @@ test("reads a server file using its logical path and captures its ETag", async (
       content: "task\n",
       etag: '"quoted-etag"',
       exists: true,
+      unchanged: false,
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -50,6 +51,36 @@ test("updates a remote file conditionally with its current ETag", async () => {
     assert.equal(request.options.method, "PUT");
     assert.equal(request.options.headers["If-Match"], '"current-etag"');
     assert.equal(request.options.body, "new task\n");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("checks a remote file conditionally and recognizes an unchanged response", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  try {
+    globalThis.fetch = async (url, options) => {
+      request = { url, options };
+      return new Response(null, {
+        status: 304,
+        headers: { ETag: '"current-etag"' },
+      });
+    };
+    const result = await readFile(
+      "https://files.example/api",
+      "token",
+      "todo.txt",
+      '"known-etag"',
+    );
+    assert.equal(request.url, "https://files.example/api/v1/files/todo.txt");
+    assert.equal(request.options.headers["If-None-Match"], '"known-etag"');
+    assert.deepEqual(result, {
+      content: null,
+      etag: '"current-etag"',
+      exists: true,
+      unchanged: true,
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
