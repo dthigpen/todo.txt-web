@@ -6,6 +6,8 @@ optionally connect it to
 [Plain File Server](https://github.com/dthigpen/plain-file-server) to open your
 task lists from a server. Lists stay portable as plain-text todo files.
 
+![Screenshot of todo.txt Web showing the task list, filters, and scheduled tasks](todotxt-web.png)
+
 ## Get started
 
 Requires Node.js 20.19 or newer.
