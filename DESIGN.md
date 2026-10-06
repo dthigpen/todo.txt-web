@@ -28,6 +28,9 @@ a requirement for using the app.
 - Show open tasks before completed tasks, then priority A–Z (including a
   completed task's `pri:` value; unprioritized after prioritized), creation
   date (oldest first, missing dates last), and task text.
+- Keep tasks with a future `t:` start date in a collapsed **Scheduled for
+  later** group. They cannot be completed before their start date and move
+  into the regular open list when that date arrives.
 - Offer open/completed/all views, text search, project/context facets, and
   compact task metadata.
 - Quick-add a task with a creation date added automatically.
@@ -35,15 +38,20 @@ a requirement for using the app.
   priority, remove `(A)` and preserve its former value as `pri:A` metadata.
 - Reopening removes the completion marker/date and restores a priority from
   `pri:` when available.
+- Support recurring task lines with `rec:` metadata. Completing one keeps its
+  completed line and creates its next open occurrence; strict schedules skip
+  missed dates so the new due date is always in the future.
 
 ### Task editor
 
 Clicking a task opens a friendly editor with one task-description field and
-controls for priority, creation date, due date, projects, contexts, and
-key-value metadata. Project and context entry accepts Enter, spaces, or commas,
-and offers suggestions from the current list. A toggle reveals the raw
-todo.txt line for users who prefer direct editing or need unknown syntax.
-Saving composes a valid interoperable line.
+controls for priority, creation date, due date, start date, recurrence,
+projects, contexts, and key-value metadata. The recurrence control explains
+normal versus strict schedules and can remove recurrence. Project and context
+entry accepts Enter, spaces, or commas, and offers suggestions from the
+current list. A toggle reveals the raw todo.txt line for users who prefer
+direct editing or need unknown syntax. Saving composes a valid interoperable
+line.
 
 ### Files and settings
 
@@ -91,7 +99,19 @@ Each nonblank line is one task. Recognized syntax includes:
 - Priority `(A)` through `(Z)`.
 - Creation date (`YYYY-MM-DD`).
 - Projects (`+name`), contexts (`@name`), and key/value tokens (`key:value`).
-- Due date convention `due:YYYY-MM-DD` (also treated as key/value metadata).
+- Due date convention `due:YYYY-MM-DD` and start/threshold date convention
+  `t:YYYY-MM-DD` (both are key/value metadata).
+- Recurrence convention `rec:N<unit>` for normal recurrence and
+  `rec:+N<unit>` for strict recurrence. Units are `d` (calendar days), `b`
+  (weekdays, excluding weekends), `w` (weeks), `m` (months), and `y` (years).
+  The editor accepts intervals from 1 to 9999.
+  Normal recurrence counts from completion; strict recurrence keeps the due
+  date's schedule, using the completion date when no due date exists. Completing
+  an overdue strict task advances past missed dates to the next future
+  occurrence. Month/year recurrence clamps to the last valid day of the target
+  month (for example, January 31 plus one month becomes February 28 or 29).
+  When a due date and start date are both present, recurrence carries their
+  day offset forward.
 
 Unknown words and tokens stay in the raw line. Blank lines are ignored in the
 task list; imports preserve task lines rather than arbitrary whitespace.
@@ -113,8 +133,9 @@ Mutations serialize one task per line with a final newline when nonempty.
 ## Initial implementation scope
 
 The first increment provides task parsing/sorting, quick add, completion and
-reopen behavior, a structured plus raw-line edit dialog, local multi-file
-storage, import/export, optional server login/path selection, conditional
-remote writes, offline change queues, and an interactive conflict resolver.
-History UI, recurrence, notifications, and collaborative editing remain out
-of scope until experience with the core file workflow justifies them.
+reopen behavior, recurring tasks and start dates, a structured plus raw-line
+edit dialog, local multi-file storage, import/export, optional server
+login/path selection, conditional remote writes, offline change queues, and an
+interactive conflict resolver. History UI, notifications, and collaborative
+editing remain out of scope until experience with the core file workflow
+justifies them.

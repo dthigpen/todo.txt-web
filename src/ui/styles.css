@@ -1108,6 +1108,117 @@ h2 {
     flex: 1;
   }
 }
+
+.scheduled-tasks {
+  margin-top: 13px;
+  border: 1px solid #ecefe9;
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.scheduled-tasks > summary {
+  min-height: 42px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #657466;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.scheduled-count {
+  min-width: 22px;
+  padding: 3px 6px;
+  border-radius: 10px;
+  color: #727f72;
+  background: #eef2ec;
+  text-align: center;
+  font-size: 10px;
+}
+
+.scheduled-tasks > p {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: #8b938a;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.scheduled-tasks .task-list {
+  padding: 0 12px 6px;
+}
+
+.scheduled-tasks .task-row:first-child {
+  border-top: 1px solid #f0f0ec;
+}
+
+.task-row.is-scheduled .task-title {
+  color: #777f78;
+}
+
+.task-row.is-scheduled .check-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.scheduled-date {
+  color: #927b56;
+}
+
+.recurrence-field {
+  min-width: 0;
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.date-field-help {
+  margin: 8px 0 0;
+  color: #858f85;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.recurrence-field > label > select {
+  width: 100%;
+}
+
+.recurrence-interval {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 11px;
+}
+
+.recurrence-help {
+  margin: 8px 0 0;
+  color: #758075;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.recurrence-field .recurrence-help + .recurrence-help {
+  margin-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .scheduled-tasks > summary {
+    min-height: 46px;
+    font-size: 14px;
+  }
+
+  .scheduled-count {
+    font-size: 12px;
+  }
+
+  .scheduled-tasks > p,
+  .recurrence-help,
+  .date-field-help {
+    font-size: 12px;
+  }
+}
 .button-row .button {
   font-size: 10px;
 }

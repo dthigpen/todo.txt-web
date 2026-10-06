@@ -2,11 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { signal } from "@preact/signals";
 import {
   completeTask,
+  isDate,
+  metadataValue,
+  nextRecurringTask,
   parseDocument,
   parseTask,
+  parseRecurrence,
   reopenTask,
   serializeDocument,
   serializeTask,
+  setMetadataValue,
   sortTasks,
   today,
 } from "../todoTxt.js";
@@ -191,6 +196,7 @@ function isValidLocalPath(value) {
 
 function App() {
   const [filter, setFilter] = useState("open");
+  const [currentDate, setCurrentDate] = useState(today());
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [contextFilter, setContextFilter] = useState("");
@@ -249,6 +255,24 @@ function App() {
     window.addEventListener("beforeinstallprompt", handleInstallPrompt);
     return () =>
       window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
+  }, []);
+
+  useEffect(() => {
+    let timer;
+    const scheduleNextDay = () => {
+      const now = new Date();
+      const midnight = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + 1,
+      );
+      timer = window.setTimeout(() => {
+        setCurrentDate(today());
+        scheduleNextDay();
+      }, midnight.getTime() - now.getTime());
+    };
+    scheduleNextDay();
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -555,15 +579,27 @@ function App() {
 
   function toggleTask(task) {
     const before = documentContent(currentKey.value);
+    const completionDate = today();
     const changed = task.completed
       ? reopenTask(task)
-      : completeTask(task, today());
-    updateTasks(tasks.map((item) => (item.id === task.id ? changed : item)));
+      : completeTask(task, completionDate);
+    const nextTasks = tasks.map((item) =>
+      item.id === task.id ? changed : item,
+    );
+    const nextOccurrence = task.completed
+      ? null
+      : nextRecurringTask(task, completionDate, tasks.length + 1);
+    if (nextOccurrence) nextTasks.push(nextOccurrence);
+    updateTasks(nextTasks);
     rememberUndoAction(
       currentKey.value,
       before,
       documentContent(currentKey.value),
-      task.completed ? "Task reopened" : "Task completed",
+      task.completed
+        ? "Task reopened"
+        : nextOccurrence
+          ? "Task completed and next occurrence created"
+          : "Task completed",
     );
   }
 
@@ -976,6 +1012,12 @@ function App() {
       return false;
     return true;
   });
+  const isScheduledTask = (task) => {
+    const startDate = metadataValue(task, "t");
+    return !task.completed && isDate(startDate) && startDate > currentDate;
+  };
+  const scheduledTasks = visibleTasks.filter(isScheduledTask);
+  const activeTasks = visibleTasks.filter((task) => !isScheduledTask(task));
   const openCount = tasks.filter((task) => !task.completed).length;
   const localFiles = Object.keys(documents.value)
     .filter((key) => key.startsWith("local:"))
@@ -1346,109 +1388,47 @@ function App() {
               </p>
             ) : null}
 
-            {visibleTasks.length ? (
+            {activeTasks.length > 0 && (
               <div class="task-list">
-                {visibleTasks.map((task) => (
-                  <article
-                    class={`task-row ${task.completed ? "is-complete" : ""}`}
+                {activeTasks.map((task) => (
+                  <TaskRow
+                    task={task}
+                    onToggle={() => toggleTask(task)}
+                    onEdit={() => {
+                      setEditorTask(task);
+                      setTaskDialogOpen(true);
+                    }}
                     key={task.id}
-                  >
-                    <button
-                      class="check-button"
-                      aria-label={
-                        task.completed ? "Reopen task" : "Complete task"
-                      }
-                      onClick={() => toggleTask(task)}
-                    >
-                      {task.completed && <span>✓</span>}
-                    </button>
-                    <button
-                      class="task-body"
-                      onClick={() => {
-                        setEditorTask(task);
-                        setTaskDialogOpen(true);
-                      }}
-                    >
-                      <span class="task-title">
-                        {!task.completed && task.priority && (
-                          <span class={`priority priority-${task.priority}`}>
-                            ({task.priority})
-                          </span>
-                        )}
-                        {task.completed &&
-                          task.metadata.find(
-                            (item) => item.key.toLowerCase() === "pri",
-                          )?.value && (
-                            <span class="priority">
-                              (
-                              {
-                                task.metadata.find(
-                                  (item) => item.key.toLowerCase() === "pri",
-                                ).value
-                              }
-                              )
-                            </span>
-                          )}
-                        <span>{task.description || "Untitled task"}</span>
-                      </span>
-                      <span class="task-meta">
-                        {task.projects.map((project) => (
-                          <span
-                            class="task-chip project-chip"
-                            key={`p-${project}`}
-                          >
-                            +{project}
-                          </span>
-                        ))}
-                        {task.contexts.map((context) => (
-                          <span
-                            class="task-chip context-chip"
-                            key={`c-${context}`}
-                          >
-                            @{context}
-                          </span>
-                        ))}
-                        {task.metadata
-                          .filter(
-                            (item) =>
-                              !["pri", "due"].includes(item.key.toLowerCase()),
-                          )
-                          .map((item) => (
-                            <span
-                              class="task-chip meta-chip"
-                              key={`${item.key}-${item.value}`}
-                            >
-                              {item.key}:{item.value}
-                            </span>
-                          ))}
-                        {task.metadata.some(
-                          (item) => item.key.toLowerCase() === "due",
-                        ) && (
-                          <span class="created-date">
-                            due{" "}
-                            {
-                              task.metadata.find(
-                                (item) => item.key.toLowerCase() === "due",
-                              ).value
-                            }
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                    <button
-                      class="edit-button"
-                      aria-label="Edit task"
-                      onClick={() => {
-                        setEditorTask(task);
-                        setTaskDialogOpen(true);
-                      }}
-                    >
-                      ↗
-                    </button>
-                  </article>
+                  />
                 ))}
               </div>
-            ) : (
+            )}
+            {scheduledTasks.length > 0 && (
+              <details class="scheduled-tasks">
+                <summary>
+                  <span>Scheduled for later</span>
+                  <span class="scheduled-count">{scheduledTasks.length}</span>
+                </summary>
+                <p>
+                  These tasks stay here until their start date. They move into
+                  your open tasks automatically when that date arrives.
+                </p>
+                <div class="task-list">
+                  {scheduledTasks.map((task) => (
+                    <TaskRow
+                      task={task}
+                      onToggle={() => toggleTask(task)}
+                      onEdit={() => {
+                        setEditorTask(task);
+                        setTaskDialogOpen(true);
+                      }}
+                      key={task.id}
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
+            {visibleTasks.length === 0 && (
               <div class="empty-state">
                 <div class="empty-illustration">
                   <span>✓</span>
@@ -1533,7 +1513,9 @@ function App() {
           ].sort()}
           metadataSuggestions={tasks.flatMap((task) =>
             task.metadata
-              .filter((item) => item.key.toLowerCase() !== "due")
+              .filter(
+                (item) => !["due", "t", "rec"].includes(item.key.toLowerCase()),
+              )
               .map(({ key, value }) => `${key}:${value}`),
           )}
           onClose={() => {
@@ -2294,6 +2276,102 @@ function ServerFileTree({ nodes, selectedFiles, onToggle, expandMatches }) {
   );
 }
 
+function TaskRow({ task, onToggle, onEdit }) {
+  const dueDate = metadataValue(task, "due");
+  const startDate = metadataValue(task, "t");
+  const scheduled = !task.completed && isDate(startDate) && startDate > today();
+  const recurrenceValue = metadataValue(task, "rec");
+  const recurrence = parseRecurrence(recurrenceValue);
+  const intervalUnit = recurrence
+    ? {
+        d: "day",
+        b: "business day",
+        w: "week",
+        m: "month",
+        y: "year",
+      }[recurrence.unit]
+    : "";
+  const priority =
+    task.priority || (task.completed ? metadataValue(task, "pri") : "");
+
+  return (
+    <article
+      class={`task-row ${task.completed ? "is-complete" : ""} ${scheduled ? "is-scheduled" : ""}`}
+    >
+      <button
+        class="check-button"
+        aria-label={
+          scheduled
+            ? `Task starts on ${startDate}`
+            : task.completed
+              ? "Reopen task"
+              : "Complete task"
+        }
+        title={scheduled ? `Available on ${startDate}` : undefined}
+        disabled={scheduled}
+        onClick={onToggle}
+      >
+        {task.completed && <span>✓</span>}
+      </button>
+      <button class="task-body" onClick={onEdit}>
+        <span class="task-title">
+          {priority && (
+            <span class={`priority priority-${priority}`}>({priority})</span>
+          )}
+          <span>{task.description || "Untitled task"}</span>
+        </span>
+        <span class="task-meta">
+          {task.projects.map((project) => (
+            <span class="task-chip project-chip" key={`p-${project}`}>
+              +{project}
+            </span>
+          ))}
+          {task.contexts.map((context) => (
+            <span class="task-chip context-chip" key={`c-${context}`}>
+              @{context}
+            </span>
+          ))}
+          {task.metadata
+            .filter((item) => {
+              const key = item.key.toLowerCase();
+              return (
+                !["pri", "due", "rec"].includes(key) &&
+                !(key === "t" && isDate(item.value))
+              );
+            })
+            .map((item) => (
+              <span
+                class="task-chip meta-chip"
+                key={`${item.key}-${item.value}`}
+              >
+                {item.key}:{item.value}
+              </span>
+            ))}
+          {dueDate && <span class="created-date">due {dueDate}</span>}
+          {startDate && (
+            <span class={`created-date ${scheduled ? "scheduled-date" : ""}`}>
+              starts {startDate}
+            </span>
+          )}
+          {recurrence && (
+            <span class="task-chip meta-chip recurrence-chip">
+              Every {recurrence.interval} {intervalUnit}
+              {recurrence.interval > 1 ? "s" : ""}
+              {recurrence.strict ? " · strict" : " · normal"}
+            </span>
+          )}
+          {recurrenceValue && !recurrence && (
+            <span class="task-chip meta-chip">rec:{recurrenceValue}</span>
+          )}
+        </span>
+      </button>
+      <button class="edit-button" aria-label="Edit task" onClick={onEdit}>
+        ↗
+      </button>
+    </article>
+  );
+}
+
 function TaskDialog({
   task,
   initialDescription,
@@ -2310,9 +2388,26 @@ function TaskDialog({
     completionDate: "",
     creationDate: today(),
   };
+  const initialRecurrenceValue = metadataValue(initialTask, "rec");
+  const initialRecurrence = parseRecurrence(initialRecurrenceValue);
   const [rawLine, setRawLine] = useState(serializeTask(initialTask));
   const [draft, setDraft] = useState({ ...initialTask });
   const [plainTextMode, setPlainTextMode] = useState(false);
+  const [recurrenceMode, setRecurrenceMode] = useState(
+    initialRecurrence
+      ? initialRecurrence.strict
+        ? "strict"
+        : "normal"
+      : initialRecurrenceValue
+        ? "custom"
+        : "none",
+  );
+  const [recurrenceInterval, setRecurrenceInterval] = useState(
+    String(initialRecurrence?.interval || 1),
+  );
+  const [recurrenceUnit, setRecurrenceUnit] = useState(
+    initialRecurrence?.unit || "w",
+  );
 
   function editField(field, value) {
     setDraft({ ...draft, [field]: value });
@@ -2324,7 +2419,21 @@ function TaskDialog({
       const parsed = parseTask(rawLine, draft.id);
       onSave({ ...parsed, id: draft.id });
     } else {
-      onSave({ ...draft, creationDate: draft.creationDate || today() });
+      let nextTask = { ...draft, creationDate: draft.creationDate || today() };
+      if (recurrenceMode === "none") {
+        nextTask = setMetadataValue(nextTask, "rec", "");
+      } else if (recurrenceMode === "normal" || recurrenceMode === "strict") {
+        const interval = Number(recurrenceInterval);
+        if (!Number.isInteger(interval) || interval < 1 || interval > 9999)
+          return;
+        const prefix = recurrenceMode === "strict" ? "+" : "";
+        nextTask = setMetadataValue(
+          nextTask,
+          "rec",
+          `${prefix}${interval}${recurrenceUnit}`,
+        );
+      }
+      onSave(nextTask);
     }
   }
 
@@ -2429,25 +2538,117 @@ function TaskDialog({
               <span class="field-label">Due date</span>
               <input
                 type="date"
-                value={
-                  draft.metadata.find(
-                    (item) => item.key.toLowerCase() === "due",
-                  )?.value || ""
+                value={metadataValue(draft, "due")}
+                onInput={(event) =>
+                  editField(
+                    "metadata",
+                    setMetadataValue(draft, "due", event.currentTarget.value)
+                      .metadata,
+                  )
                 }
-                onInput={(event) => {
-                  const metadata = draft.metadata.filter(
-                    (item) => item.key.toLowerCase() !== "due",
-                  );
-                  if (event.currentTarget.value)
-                    metadata.push({
-                      key: "due",
-                      value: event.currentTarget.value,
-                    });
-                  editField("metadata", metadata);
-                }}
+              />
+            </label>
+            <label>
+              <span class="field-label">Start date</span>
+              <input
+                type="date"
+                value={metadataValue(draft, "t")}
+                onInput={(event) =>
+                  editField(
+                    "metadata",
+                    setMetadataValue(draft, "t", event.currentTarget.value)
+                      .metadata,
+                  )
+                }
               />
             </label>
           </div>
+          <p class="date-field-help">
+            Tasks with a future start date stay under Scheduled for later until
+            that date.
+          </p>
+          <fieldset class="recurrence-field">
+            <legend class="field-label">Repeat</legend>
+            <label>
+              <span class="visually-hidden">Recurrence schedule</span>
+              <select
+                value={recurrenceMode}
+                onChange={(event) => {
+                  const mode = event.currentTarget.value;
+                  setRecurrenceMode(mode);
+                  if (
+                    (mode === "normal" || mode === "strict") &&
+                    recurrenceMode !== "normal" &&
+                    recurrenceMode !== "strict"
+                  ) {
+                    setRecurrenceInterval("1");
+                    setRecurrenceUnit("w");
+                  }
+                }}
+              >
+                <option value="none">Does not repeat</option>
+                <option value="normal">Normal — from completion date</option>
+                <option value="strict">
+                  Strict — keep the due-date schedule
+                </option>
+                {recurrenceMode === "custom" && (
+                  <option value="custom">Unrecognized value (preserved)</option>
+                )}
+              </select>
+            </label>
+            {(recurrenceMode === "normal" || recurrenceMode === "strict") && (
+              <>
+                <div class="recurrence-interval">
+                  <label>
+                    <span class="field-label">Every</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="9999"
+                      step="1"
+                      value={recurrenceInterval}
+                      required
+                      onInput={(event) =>
+                        setRecurrenceInterval(event.currentTarget.value)
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span class="field-label">Unit</span>
+                    <select
+                      value={recurrenceUnit}
+                      onChange={(event) =>
+                        setRecurrenceUnit(event.currentTarget.value)
+                      }
+                    >
+                      <option value="d">Days</option>
+                      <option value="b">Business days</option>
+                      <option value="w">Weeks</option>
+                      <option value="m">Months</option>
+                      <option value="y">Years</option>
+                    </select>
+                  </label>
+                </div>
+                <p class="recurrence-help">
+                  {recurrenceMode === "normal"
+                    ? "The next due date is counted from the day you complete this task, so missed cycles do not pile up."
+                    : "The next due date stays on the original schedule. If cycles were missed, they are skipped to the next future date."}
+                </p>
+                {recurrenceMode === "strict" && (
+                  <p class="recurrence-help">
+                    Without a due date, the completion date is used as the
+                    schedule anchor.
+                  </p>
+                )}
+              </>
+            )}
+            {recurrenceMode === "custom" && (
+              <p class="recurrence-help">
+                This task has an unrecognized rec: value. It is kept as-is; edit
+                the plain-text line to change it.
+              </p>
+            )}
+          </fieldset>
           <TagField
             label="Projects"
             prefix="+"
@@ -2469,10 +2670,12 @@ function TaskDialog({
           <TagField
             label="Other details"
             values={draft.metadata
-              .filter((item) => item.key.toLowerCase() !== "due")
+              .filter(
+                (item) => !["due", "t", "rec"].includes(item.key.toLowerCase()),
+              )
               .map(({ key, value }) => `${key}:${value}`)}
             suggestions={metadataSuggestions}
-            description="Optional details in key:value form, such as repeat:weekly."
+            description="Optional details in key:value form."
             placeholder="Type key:value and press Enter"
             onChange={(tokens) => {
               const metadata = tokens
@@ -2488,8 +2691,8 @@ function TaskDialog({
                 .filter(Boolean);
               editField("metadata", [
                 ...metadata,
-                ...draft.metadata.filter(
-                  (item) => item.key.toLowerCase() === "due",
+                ...draft.metadata.filter((item) =>
+                  ["due", "t", "rec"].includes(item.key.toLowerCase()),
                 ),
               ]);
             }}

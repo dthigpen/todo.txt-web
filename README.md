@@ -1,7 +1,8 @@
 # todo.txt Web
 
-A simple, local-first task manager with projects, contexts, priorities, and
-due dates. Use it with browser storage alone, or optionally connect it to
+A simple, local-first task manager with projects, contexts, priorities, due
+dates, start dates, and recurring tasks. Use it with browser storage alone, or
+optionally connect it to
 [Plain File Server](https://github.com/dthigpen/plain-file-server) to open your
 task lists from a server. Lists stay portable as plain-text todo files.
 
