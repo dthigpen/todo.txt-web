@@ -60,6 +60,16 @@ test("sorts open before completed, then priority, creation date, and text", () =
   );
 });
 
+test("sorts tasks with a due date above tasks without one, earliest due first", () => {
+  const tasks = parseDocument(
+    "No due date\nLater due due:2026-05-01\nSooner due due:2026-02-01",
+  );
+  assert.deepEqual(
+    sortTasks(tasks).map((task) => task.description),
+    ["Sooner due", "Later due", "No due date"],
+  );
+});
+
 test("serializes a document with one newline per task", () => {
   assert.equal(serializeDocument(parseDocument("One\r\n\nTwo")), "One\nTwo\n");
 });

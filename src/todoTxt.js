@@ -315,6 +315,14 @@ export function sortTasks(tasks) {
       if (!rightPriority) return -1;
       return leftPriority.localeCompare(rightPriority);
     }
+    const leftDue = metadataValue(left, "due");
+    const rightDue = metadataValue(right, "due");
+    if (Boolean(leftDue) !== Boolean(rightDue)) {
+      return leftDue ? -1 : 1;
+    }
+    if (leftDue && rightDue && leftDue !== rightDue) {
+      return leftDue.localeCompare(rightDue);
+    }
     const leftDate = left.creationDate;
     const rightDate = right.creationDate;
     if (leftDate !== rightDate) {

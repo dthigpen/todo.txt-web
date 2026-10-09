@@ -1,0 +1,14 @@
+GET
+https://dthigpen.github.io/src/main.jsx
+NS_ERROR_CORRUPTED_CONTENT
+
+Loading module from “https://dthigpen.github.io/src/main.jsx” was blocked because of a disallowed MIME type (“text/html”).
+todo.txt-web
+Loading failed for the module with source “https://dthigpen.github.io/src/main.jsx”. todo.txt-web:21:47
+GET
+https://dthigpen.github.io/todo.txt-web/icons/task-list-192.png
+[HTTP/2 404  14ms]
+
+GET
+https://dthigpen.github.io/todo.txt-web/icons/task-list.svg
+[HTTP/2 404  16ms]

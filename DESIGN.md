@@ -26,8 +26,9 @@ a requirement for using the app.
 ### Task list
 
 - Show open tasks before completed tasks, then priority A–Z (including a
-  completed task's `pri:` value; unprioritized after prioritized), creation
-  date (oldest first, missing dates last), and task text.
+  completed task's `pri:` value; unprioritized after prioritized), tasks with a
+  `due:` date before tasks without one (earliest due first), creation date
+  (oldest first, missing dates last), and task text.
 - Keep tasks with a future `t:` start date in a collapsed **Scheduled for
   later** group. They cannot be completed before their start date and move
   into the regular open list when that date arrives.
