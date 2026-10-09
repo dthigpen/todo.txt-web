@@ -1078,8 +1078,8 @@ function App() {
     );
   }
 
-  async function openRemote(path = remotePathInput) {
-    const cleanPath = path.trim().replace(/^\/+/, "");
+  async function openRemote(path) {
+    const cleanPath = (path || "").trim().replace(/^\/+/, "");
     if (
       !cleanPath ||
       cleanPath
@@ -1089,11 +1089,11 @@ function App() {
       setServerError(
         "Enter a valid relative file path, such as household/todo.txt.",
       );
-      return;
+      return false;
     }
     if (!serverSettings.value.base) {
       setServerError("Connect to a server before opening a server path.");
-      return;
+      return false;
     }
     const base = serverSettings.value.base.replace(/\/+$/, "");
     const key = fileKey(base, cleanPath);
@@ -1105,14 +1105,13 @@ function App() {
         setServerError(
           `No saved copy of ${cleanPath} is on this device yet. Connect to the server once while online to download it.`,
         );
-        return;
+        return false;
       }
       selectCurrentKey(key);
       activeRemotePath.value = cleanPath;
       remoteState.value = {
         etag: queued?.etag ?? serverEtags.value[key] ?? null,
       };
-      setRemotePathInput(cleanPath);
       const selectedFiles = new Set(serverSettings.value.selectedFiles || []);
       selectedFiles.add(cleanPath);
       const nextSettings = {
@@ -1129,7 +1128,7 @@ function App() {
           : `Opened the saved copy of ${cleanPath}`,
       );
       setSettingsOpen(false);
-      return;
+      return true;
     }
 
     setBusy(true);
@@ -1177,7 +1176,6 @@ function App() {
       selectCurrentKey(key);
       activeRemotePath.value = cleanPath;
       remoteState.value = { etag };
-      setRemotePathInput(cleanPath);
       const selectedFiles = new Set(serverSettings.value.selectedFiles || []);
       selectedFiles.add(cleanPath);
       const nextSettings = {
@@ -1208,6 +1206,7 @@ function App() {
       } else {
         setSettingsOpen(false);
       }
+      return true;
     } catch (error) {
       if (
         error instanceof TypeError ||
@@ -1217,7 +1216,7 @@ function App() {
       ) {
         if (cachedContent === undefined) {
           setServerError(`Could not open ${cleanPath}: ${error.message}`);
-          return;
+          return false;
         }
         const cachedEtag = serverEtags.value[key] || null;
         selectCurrentKey(key);
@@ -1243,9 +1242,11 @@ function App() {
               ? `Opened the saved copy of ${cleanPath}; the server denied access`
               : `Opened the saved copy of ${cleanPath}`,
         );
+        return true;
       } else {
         setServerError(`Could not open ${cleanPath}: ${error.message}`);
       }
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1775,14 +1776,13 @@ function App() {
           toggleServerFile={toggleServerFile}
           serverError={serverError}
           storageError={storageError.value}
+          openRemote={openRemote}
           remotePathInput={remotePathInput}
           setRemotePathInput={setRemotePathInput}
-          openRemote={openRemote}
           busy={busy}
           refreshServerFiles={refreshServerFiles}
           loadingServerPath={loadingServerPath}
           serverPathNotice={serverPathNotice}
-          setServerPathNotice={setServerPathNotice}
         />
       )}
 
@@ -2197,14 +2197,13 @@ function FilesDialog(props) {
     toggleServerFile,
     serverError,
     storageError,
+    openRemote,
     remotePathInput,
     setRemotePathInput,
-    openRemote,
     busy,
     refreshServerFiles,
     loadingServerPath,
     serverPathNotice,
-    setServerPathNotice,
   } = props;
   const [serverSearch, setServerSearch] = useState("");
   const serverTree = useMemo(
@@ -2415,10 +2414,14 @@ function FilesDialog(props) {
                 </button>
               </div>
               <p class="fine-print">
-                Only selected files appear in Current list. You can also enter
-                another path below.
+                Only selected files appear in Current list. Select an existing
+                file to cache it here for offline use.
               </p>
               <div class="remote-browser-tools">
+                <span class="remote-file-count">
+                  {countServerFiles(serverTree)} files ·{" "}
+                  {selectedServerFiles.length} in your lists
+                </span>
                 <label class="remote-search">
                   <span class="visually-hidden">Search server files</span>
                   <input
@@ -2430,11 +2433,39 @@ function FilesDialog(props) {
                     placeholder="Search files and folders"
                   />
                 </label>
-                <span class="remote-file-count">
-                  {countServerFiles(serverTree)} shown ·{" "}
-                  {selectedServerFiles.length} in your lists
-                </span>
               </div>
+              <form
+                class="server-path-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!remotePathInput.trim()) return;
+                  openRemote(remotePathInput).then((opened) => {
+                    if (opened) setRemotePathInput("");
+                  });
+                }}
+              >
+                <label class="visually-hidden" for="server-file-path">
+                  New or existing server file path
+                </label>
+                <input
+                  id="server-file-path"
+                  value={remotePathInput}
+                  onInput={(event) =>
+                    setRemotePathInput(event.currentTarget.value)
+                  }
+                  placeholder="New path, e.g. household/todo.txt"
+                  disabled={busy}
+                />
+                <button
+                  class="tree-add-button"
+                  type="submit"
+                  aria-label="Create or open server file"
+                  title="Create or open server file"
+                  disabled={busy || !remotePathInput.trim()}
+                >
+                  +
+                </button>
+              </form>
               <div class="saved-file-list remote-file-list">
                 {serverTree.length ? (
                   <ServerFileTree
@@ -2452,37 +2483,16 @@ function FilesDialog(props) {
                   </span>
                 )}
               </div>
-              <form
-                class="inline-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  openRemote();
-                }}
-              >
-                <input
-                  value={remotePathInput}
-                  onInput={(event) => {
-                    setRemotePathInput(event.currentTarget.value);
-                    setServerPathNotice("");
-                  }}
-                  placeholder="New or existing path, e.g. household/foo/bar.txt"
-                  aria-label="Remote file path"
-                />
-                <button class="button button-secondary" disabled={busy}>
-                  {busy ? "Opening…" : "Open or create"}
-                </button>
-              </form>
               {serverPathNotice && (
                 <p class="connected-note" role="status">
                   {serverPathNotice}
                 </p>
               )}
               <p class="fine-print">
-                Enter a relative path. Existing files open normally; a missing
-                file is created empty on the server and added to your lists.
-                Selected files are downloaded here for offline use. Unchecking a
-                file removes it from your list picker but does not delete it
-                from the server.
+                Enter a relative path. A missing file is created immediately,
+                with parent folders as needed, and added to your lists. Empty
+                folders are not stored. Unchecking a file only removes it from
+                your list picker.
               </p>
             </div>
           )}

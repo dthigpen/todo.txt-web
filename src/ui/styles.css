@@ -1936,13 +1936,55 @@ body {
   margin: 0 0 7px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: start;
   gap: 8px;
 }
 
 .remote-search {
   min-width: 0;
   flex: 1;
+}
+
+.server-path-form {
+  margin: 0 0 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dialog .server-path-form input {
+  min-width: 0;
+  min-height: 35px;
+  flex: 1;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.tree-add-button {
+  width: 29px;
+  height: 29px;
+  flex: 0 0 auto;
+  border: 1px solid #dfe8dc;
+  border-radius: 6px;
+  color: #4f7555;
+  background: #f3f7f1;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.server-path-form .tree-add-button {
+  width: 35px;
+  height: 35px;
+}
+
+.tree-add-button:hover {
+  background: #e9f0e6;
+}
+
+.tree-add-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .dialog .remote-search input {

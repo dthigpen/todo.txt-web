@@ -33,10 +33,11 @@ Open **Files & settings**, enter the server API URL (for example,
 or enter another path, such as `household/todo.txt`, if your account has access.
 The server enforces path permissions. Use the checkboxes in settings to choose
 which readable server files are task lists; other server files stay out of the
-main list picker. Adding a file from the tree downloads a device copy for
-offline use. Entering a missing relative path creates an empty file on the
-server immediately and adds it to your lists; unchecking a file only removes
-it from the picker and does not delete the server file.
+main list picker. Enter a relative path above the file tree and select **+** to
+create a missing file immediately; it appears in the tree selected for your
+lists. Existing files are added and cached for offline use. Parent folders are
+created as needed, but empty folders are not stored by the server. Unchecking a
+file only removes it from the picker—it does not delete the server file.
 
 The app caches the current document locally and writes remote changes with
 `If-Match` using its latest ETag. While signed in, it checks cached server lists
