@@ -56,6 +56,37 @@ test("updates a remote file conditionally with its current ETag", async () => {
   }
 });
 
+test("creates a remote file with an empty body when no ETag exists", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  try {
+    globalThis.fetch = async (url, options) => {
+      request = { url, options };
+      return new Response(null, {
+        status: 201,
+        headers: { ETag: '"new-file-etag"' },
+      });
+    };
+    const response = await writeFile(
+      "https://files.example/api",
+      "token",
+      "household/foo/bar.txt",
+      "",
+      null,
+    );
+    assert.equal(
+      request.url,
+      "https://files.example/api/v1/files/household/foo/bar.txt",
+    );
+    assert.equal(request.options.method, "PUT");
+    assert.equal(request.options.body, "");
+    assert.equal(request.options.headers["If-Match"], undefined);
+    assert.equal(response.headers.get("ETag"), '"new-file-etag"');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("checks a remote file conditionally and recognizes an unchanged response", async () => {
   const originalFetch = globalThis.fetch;
   let request;

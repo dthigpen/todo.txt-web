@@ -64,6 +64,14 @@ line.
   path is discoverable from the server's read-only file listing.
 - Let users mark which readable server files are task lists; keep other server
   files out of the main list switcher while allowing manually entered paths.
+- Selecting a readable server file downloads and caches its content before
+  adding it to the task-list switcher, so selected lists are available offline.
+  Provide one path field and create action above the file tree. Creating a
+  missing relative path creates an empty file immediately, selects it, and
+  shows the new file in the tree; nested names create parent folders as needed.
+  Since the backend stores files, empty folders do not persist. Removing a file
+  from the switcher only changes the local selection; it must not silently
+  delete server data.
 - Put list switching in the main view next to the current list; keep settings
   for list creation, import/export, and server connection.
 - Allow browser-local lists to be renamed, deleted, and exported individually.
@@ -78,7 +86,8 @@ line.
 - Remember the last selected local or server list across visits. Keep known
   server paths and selected task lists locally so previously opened server
   lists remain visible and editable from their cached copies while offline or
-  signed out. Never imply that an uncached server file is available offline.
+  signed out. A selected path should have a local cached copy; never imply that
+  an uncached server file is available offline.
 - Cache the static app shell as an installable PWA, but do not cache API
   responses or server task data in the service worker. Document data remains
   under browser storage and the existing sync queue.

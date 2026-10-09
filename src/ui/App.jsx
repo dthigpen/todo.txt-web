@@ -217,6 +217,8 @@ function App() {
       : [],
   );
   const [serverError, setServerError] = useState("");
+  const [loadingServerPath, setLoadingServerPath] = useState("");
+  const [serverPathNotice, setServerPathNotice] = useState("");
   const [authHint, setAuthHint] = useState("");
   const [busy, setBusy] = useState(false);
   const [newFileName, setNewFileName] = useState("");
@@ -406,10 +408,14 @@ function App() {
 
     remoteRefreshBusy.current = true;
     const prefix = `server:${base}:`;
+    const selectedPaths = Array.isArray(serverSettings.value.selectedFiles)
+      ? serverSettings.value.selectedFiles
+      : [];
     const keys = [
       ...new Set([
         ...Object.keys(documents.value),
         ...Object.keys(pendingQueue.value),
+        ...selectedPaths.map((path) => fileKey(base, path)),
       ]),
     ].filter((key) => key.startsWith(prefix) && getRemotePath(key, base));
     const updatedPaths = [];
@@ -420,11 +426,34 @@ function App() {
         syncBusy.current.add(key);
         const path = getRemotePath(key, base);
         const knownQueue = pendingQueue.value[key];
-        const knownEtag = knownQueue?.etag ?? serverEtags.value[key] ?? null;
+        const hasCachedContent = documents.value[key] !== undefined;
+        const knownEtag = hasCachedContent
+          ? (knownQueue?.etag ?? serverEtags.value[key] ?? null)
+          : (knownQueue?.etag ?? null);
         try {
           const remote = await readFile(base, token, path, knownEtag);
           setIsOnline(true);
           if (key === currentKey.value && taskDialogOpen) continue;
+          if (documents.value[key] === undefined && !pendingQueue.value[key]) {
+            if (remote.exists) {
+              const nextDocuments = {
+                ...documents.value,
+                [key]: remote.content,
+              };
+              documents.value = nextDocuments;
+              saveDocuments(nextDocuments);
+              setDocumentRevision((revision) => revision + 1);
+              if (remote.etag) {
+                const nextEtags = {
+                  ...serverEtags.value,
+                  [key]: remote.etag,
+                };
+                serverEtags.value = nextEtags;
+                persistObject(ETAGS_KEY, nextEtags);
+              }
+            }
+            continue;
+          }
           const localContent = documentContent(key);
           const queued = pendingQueue.value[key];
           const action = classifyRemoteContent(localContent, queued, remote);
@@ -898,20 +927,91 @@ function App() {
     );
   }
 
-  function toggleServerFile(path, selected) {
+  async function toggleServerFile(path, selected) {
     const currentSelection = Array.isArray(serverSettings.value.selectedFiles)
       ? serverSettings.value.selectedFiles
       : [];
     const selectedFiles = new Set(currentSelection);
-    if (selected) selectedFiles.add(path);
-    else selectedFiles.delete(path);
-    const next = {
-      ...serverSettings.value,
-      selectedFiles: [...selectedFiles].sort(),
-    };
-    serverSettings.value = next;
-    saveSettings(next);
-    setDocumentRevision((revision) => revision + 1);
+    if (!selected) {
+      selectedFiles.delete(path);
+      const next = {
+        ...serverSettings.value,
+        selectedFiles: [...selectedFiles].sort(),
+      };
+      serverSettings.value = next;
+      saveSettings(next);
+      setDocumentRevision((revision) => revision + 1);
+      setServerPathNotice("");
+      return;
+    }
+
+    const base = serverSettings.value.base?.replace(/\/+$/, "");
+    if (!base) {
+      setServerError("Connect to the server before adding a server list.");
+      return;
+    }
+    const key = fileKey(base, path);
+    let locked = false;
+    let loading = false;
+    try {
+      let content = documents.value[key];
+      let etag = serverEtags.value[key] || null;
+      if (content === undefined) {
+        if (!serverSettings.value.token) {
+          setServerError("Sign in to download this list for offline use.");
+          return;
+        }
+        if (!navigator.onLine) {
+          setServerError(
+            `Connect while online to download ${path} before adding it to your lists.`,
+          );
+          return;
+        }
+        setLoadingServerPath(path);
+        loading = true;
+        syncBusy.current.add(key);
+        locked = true;
+        const remote = await readFile(base, serverSettings.value.token, path);
+        if (!remote.exists)
+          throw new Error("This file no longer exists on the server.");
+        content = remote.content;
+        etag = remote.etag;
+        setIsOnline(true);
+        const nextDocuments = { ...documents.value, [key]: content };
+        documents.value = nextDocuments;
+        saveDocuments(nextDocuments);
+        setDocumentRevision((revision) => revision + 1);
+        if (etag) {
+          const nextEtags = { ...serverEtags.value, [key]: etag };
+          serverEtags.value = nextEtags;
+          persistObject(ETAGS_KEY, nextEtags);
+        }
+      }
+      selectedFiles.add(path);
+      const next = {
+        ...serverSettings.value,
+        selectedFiles: [...selectedFiles].sort(),
+      };
+      serverSettings.value = next;
+      saveSettings(next);
+      setServerError("");
+      setServerPathNotice(
+        `Added ${path} to your lists. A copy is saved on this device for offline use.`,
+      );
+      setNotice(`Added ${path} to your lists and saved a copy on this device`);
+    } catch (error) {
+      if (error instanceof TypeError || !navigator.onLine) {
+        setIsOnline(false);
+        setServerError(
+          `Could not download ${path} for offline use: ${error.message}`,
+        );
+      } else {
+        setServerError(`Could not add ${path}: ${error.message}`);
+      }
+    } finally {
+      if (locked) syncBusy.current.delete(key);
+      if (loading) setLoadingServerPath("");
+    }
   }
 
   async function connect(event) {
@@ -1034,16 +1134,36 @@ function App() {
 
     setBusy(true);
     setServerError("");
+    setServerPathNotice("");
     try {
-      const result = await readFile(
-        base,
-        serverSettings.value.token,
-        cleanPath,
-      );
+      let result = await readFile(base, serverSettings.value.token, cleanPath);
+      let created = false;
+      let etag = result.etag || null;
+      if (!result.exists) {
+        try {
+          const response = await writeFile(
+            base,
+            serverSettings.value.token,
+            cleanPath,
+            "",
+            null,
+          );
+          created = true;
+          etag = response.headers.get("ETag");
+          result = {
+            content: "",
+            etag,
+            exists: true,
+            unchanged: false,
+          };
+        } catch (createError) {
+          if (![412, 428].includes(createError.status)) throw createError;
+          result = await readFile(base, serverSettings.value.token, cleanPath);
+          if (!result.exists) throw createError;
+          etag = result.etag || null;
+        }
+      }
       const content = result.content;
-      const etag = result.exists
-        ? result.etag || serverEtags.value[key] || null
-        : null;
       if (!result.exists && serverEtags.value[key]) {
         const nextEtags = { ...serverEtags.value };
         delete nextEtags[key];
@@ -1066,6 +1186,9 @@ function App() {
       };
       serverSettings.value = nextSettings;
       saveSettings(nextSettings);
+      if (created) {
+        setServerFiles((files) => [...new Set([...files, cleanPath])].sort());
+      }
       if (etag) {
         const nextEtags = { ...serverEtags.value, [key]: etag };
         serverEtags.value = nextEtags;
@@ -1073,8 +1196,18 @@ function App() {
       }
       setIsOnline(true);
       setServerError("");
-      setNotice(`Opened ${cleanPath}`);
-      setSettingsOpen(false);
+      setNotice(
+        created
+          ? `Created ${cleanPath} on the server and added it to your lists`
+          : `Opened ${cleanPath}`,
+      );
+      if (created) {
+        setServerPathNotice(
+          `Created ${cleanPath} on the server and added it to your lists.`,
+        );
+      } else {
+        setSettingsOpen(false);
+      }
     } catch (error) {
       if (
         error instanceof TypeError ||
@@ -1647,6 +1780,9 @@ function App() {
           openRemote={openRemote}
           busy={busy}
           refreshServerFiles={refreshServerFiles}
+          loadingServerPath={loadingServerPath}
+          serverPathNotice={serverPathNotice}
+          setServerPathNotice={setServerPathNotice}
         />
       )}
 
@@ -2066,6 +2202,9 @@ function FilesDialog(props) {
     openRemote,
     busy,
     refreshServerFiles,
+    loadingServerPath,
+    serverPathNotice,
+    setServerPathNotice,
   } = props;
   const [serverSearch, setServerSearch] = useState("");
   const serverTree = useMemo(
@@ -2303,6 +2442,7 @@ function FilesDialog(props) {
                     selectedFiles={selectedServerFiles}
                     onToggle={toggleServerFile}
                     expandMatches={Boolean(serverSearch.trim())}
+                    loadingPath={loadingServerPath}
                   />
                 ) : (
                   <span class="fine-print">
@@ -2321,19 +2461,28 @@ function FilesDialog(props) {
               >
                 <input
                   value={remotePathInput}
-                  onInput={(event) =>
-                    setRemotePathInput(event.currentTarget.value)
-                  }
-                  placeholder="File path, e.g. household/todo.txt"
+                  onInput={(event) => {
+                    setRemotePathInput(event.currentTarget.value);
+                    setServerPathNotice("");
+                  }}
+                  placeholder="New or existing path, e.g. household/foo/bar.txt"
                   aria-label="Remote file path"
                 />
                 <button class="button button-secondary" disabled={busy}>
-                  {busy ? "Opening…" : "Open path"}
+                  {busy ? "Opening…" : "Open or create"}
                 </button>
               </form>
+              {serverPathNotice && (
+                <p class="connected-note" role="status">
+                  {serverPathNotice}
+                </p>
+              )}
               <p class="fine-print">
-                Paths are relative to your server's storage directory. Read and
-                write access is controlled by your account.
+                Enter a relative path. Existing files open normally; a missing
+                file is created empty on the server and added to your lists.
+                Selected files are downloaded here for offline use. Unchecking a
+                file removes it from your list picker but does not delete it
+                from the server.
               </p>
             </div>
           )}
@@ -2363,7 +2512,13 @@ function FilesDialog(props) {
   );
 }
 
-function ServerFileTree({ nodes, selectedFiles, onToggle, expandMatches }) {
+function ServerFileTree({
+  nodes,
+  selectedFiles,
+  onToggle,
+  expandMatches,
+  loadingPath,
+}) {
   const directories = nodes.filter((node) => node.type === "directory");
   const files = nodes.filter((node) => node.type === "file");
   const renderFile = (node) => (
@@ -2375,9 +2530,16 @@ function ServerFileTree({ nodes, selectedFiles, onToggle, expandMatches }) {
         <input
           type="checkbox"
           checked={selectedFiles.includes(node.path)}
+          disabled={loadingPath === node.path}
           onChange={(event) => onToggle(node.path, event.currentTarget.checked)}
         />
-        <span>{selectedFiles.includes(node.path) ? "In my lists" : "Add"}</span>
+        <span>
+          {loadingPath === node.path
+            ? "Loading…"
+            : selectedFiles.includes(node.path)
+              ? "In my lists"
+              : "Add"}
+        </span>
       </label>
     </li>
   );
@@ -2401,6 +2563,7 @@ function ServerFileTree({ nodes, selectedFiles, onToggle, expandMatches }) {
               selectedFiles={selectedFiles}
               onToggle={onToggle}
               expandMatches={expandMatches}
+              loadingPath={loadingPath}
             />
           </details>
         </li>
