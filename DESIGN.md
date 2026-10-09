@@ -106,6 +106,12 @@ line.
   lines. Unchanged tasks are included but hidden by default; the resolved copy
   syncs conditionally using the latest server ETag. Since task lines have no
   stable IDs, edited tasks appear as a removal and an addition.
+- Keep a short per-file log of recent local line operations (completing,
+  reopening, editing a task) in browser storage. When reviewing a conflict,
+  use it to group an operation's related removal and addition into one
+  collapsible entry with a single keep-all checkbox, so a completion reads as
+  one action instead of two unrelated lines. The grouping is presentational;
+  individual lines remain selectable.
 
 ## Format behavior
 

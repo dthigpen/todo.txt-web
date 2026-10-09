@@ -16,6 +16,11 @@ import {
   today,
 } from "../todoTxt.js";
 import { createMergeRows, serializeMergeRows } from "../conflictMerge.js";
+import {
+  groupMergeRows,
+  operationsForKey,
+  recordOperation,
+} from "../lineHistory.js";
 import { classifyRemoteContent, settlePendingWrite } from "../syncQueue.js";
 import { listFiles, login, readFile, writeFile } from "../server.js";
 import { loadLastList, saveLastList } from "../lastList.js";
@@ -25,6 +30,7 @@ const DOCS_KEY = "todo-txt-web.documents";
 const SETTINGS_KEY = "todo-txt-web.server";
 const PENDING_KEY = "todo-txt-web.pending-sync";
 const ETAGS_KEY = "todo-txt-web.server-etags";
+const HISTORY_KEY = "todo-txt-web.line-history";
 const storageError = signal("");
 const storageErrorDismissed = signal(false);
 const documents = signal(loadDocuments());
@@ -32,6 +38,7 @@ const serverSettings = signal(loadServerSettings());
 const currentKey = signal(loadCurrentKey());
 const pendingQueue = signal(loadPendingQueue());
 const serverEtags = signal(loadStoredObject(ETAGS_KEY));
+const lineHistory = signal(loadStoredObject(HISTORY_KEY));
 const activeRemotePath = signal(
   getRemotePath(currentKey.value, serverSettings.value.base),
 );
@@ -573,11 +580,21 @@ function App() {
     }
   }
 
-  function updateContent(content) {
+  function updateContent(content, label) {
     if (undoActionRef.current?.key === currentKey.value) {
       clearUndoAction();
     }
     const previousContent = documentContent(currentKey.value);
+    if (label && content !== previousContent) {
+      const nextHistory = recordOperation(lineHistory.value, {
+        key: currentKey.value,
+        label,
+        before: previousContent,
+        after: content,
+      });
+      lineHistory.value = nextHistory;
+      persistObject(HISTORY_KEY, nextHistory);
+    }
     const next = { ...documents.value, [currentKey.value]: content };
     documents.value = next;
     saveDocuments(next);
@@ -599,8 +616,8 @@ function App() {
     }
   }
 
-  function updateTasks(nextTasks) {
-    updateContent(serializeDocument(nextTasks));
+  function updateTasks(nextTasks, label) {
+    updateContent(serializeDocument(nextTasks), label);
   }
 
   async function syncPending(key) {
@@ -747,10 +764,10 @@ function App() {
     task.completed = false;
     task.completionDate = "";
     task.creationDate ||= today();
-    updateTasks([
-      { ...task, creationDate: task.creationDate || today() },
-      ...tasks,
-    ]);
+    updateTasks(
+      [{ ...task, creationDate: task.creationDate || today() }, ...tasks],
+      "Added",
+    );
     event.currentTarget.reset();
     setNotice("Task added");
   }
@@ -768,7 +785,14 @@ function App() {
       ? null
       : nextRecurringTask(task, completionDate, tasks.length + 1);
     if (nextOccurrence) nextTasks.push(nextOccurrence);
-    updateTasks(nextTasks);
+    updateTasks(
+      nextTasks,
+      task.completed
+        ? "Reopened"
+        : nextOccurrence
+          ? "Completed & scheduled next"
+          : "Completed",
+    );
     rememberUndoAction(
       currentKey.value,
       before,
@@ -782,7 +806,10 @@ function App() {
   }
 
   function removeTask(task) {
-    updateTasks(tasks.filter((item) => item.id !== task.id));
+    updateTasks(
+      tasks.filter((item) => item.id !== task.id),
+      "Removed",
+    );
   }
 
   function saveEditedTask(nextTask) {
@@ -791,12 +818,16 @@ function App() {
     if (editorTask) {
       updateTasks(
         tasks.map((item) => (item.id === editorTask.id ? nextTask : item)),
+        "Updated",
       );
     } else {
-      updateTasks([
-        { ...nextTask, creationDate: nextTask.creationDate || today() },
-        ...tasks,
-      ]);
+      updateTasks(
+        [
+          { ...nextTask, creationDate: nextTask.creationDate || today() },
+          ...tasks,
+        ],
+        "Added",
+      );
     }
     setEditorTask(null);
     setTaskDialogOpen(false);
@@ -1840,6 +1871,7 @@ function App() {
         <ConflictDialog
           key={conflictDialogKey}
           item={pendingQueue.value[conflictDialogKey]}
+          operations={operationsForKey(lineHistory.value, conflictDialogKey)}
           settings={serverSettings.value}
           onClose={() => setConflictDialogKey("")}
           onResolve={(choice) => {
@@ -1901,7 +1933,7 @@ function App() {
   );
 }
 
-function ConflictDialog({ item, settings, onClose, onResolve }) {
+function ConflictDialog({ item, operations, settings, onClose, onResolve }) {
   const [snapshot, setSnapshot] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1947,6 +1979,24 @@ function ConflictDialog({ item, settings, onClose, onResolve }) {
     (row) => row.change === "unchanged",
   ).length;
   const changedRows = rows.filter((row) => row.change !== "unchanged");
+  const changedItems = groupMergeRows(changedRows, operations);
+
+  function setRowKeep(id, keep) {
+    setRows((current) =>
+      current.map((candidate) =>
+        candidate.id === id ? { ...candidate, keep } : candidate,
+      ),
+    );
+  }
+
+  function setRowsKeep(ids, keep) {
+    const idSet = new Set(ids);
+    setRows((current) =>
+      current.map((candidate) =>
+        idSet.has(candidate.id) ? { ...candidate, keep } : candidate,
+      ),
+    );
+  }
 
   return (
     <div
@@ -2055,16 +2105,9 @@ function ConflictDialog({ item, settings, onClose, onResolve }) {
                           type="checkbox"
                           checked={row.keep}
                           aria-label={`Keep task: ${row.line}`}
-                          onChange={(event) => {
-                            const keep = event.currentTarget.checked;
-                            setRows((current) =>
-                              current.map((candidate) =>
-                                candidate.id === row.id
-                                  ? { ...candidate, keep }
-                                  : candidate,
-                              ),
-                            );
-                          }}
+                          onChange={(event) =>
+                            setRowKeep(row.id, event.currentTarget.checked)
+                          }
                         />
                         <span class="conflict-task-line">{row.line}</span>
                         <span class="conflict-source">Unchanged</span>
@@ -2075,29 +2118,38 @@ function ConflictDialog({ item, settings, onClose, onResolve }) {
             )}
             <div class="conflict-task-list" aria-label="Changed tasks">
               {changedRows.length ? (
-                changedRows.map((row) => (
-                  <label class="conflict-task" key={row.id}>
-                    <input
-                      type="checkbox"
-                      checked={row.keep}
-                      aria-label={`Keep task: ${row.line}`}
-                      onChange={(event) => {
-                        const keep = event.currentTarget.checked;
-                        setRows((current) =>
-                          current.map((candidate) =>
-                            candidate.id === row.id
-                              ? { ...candidate, keep }
-                              : candidate,
-                          ),
-                        );
-                      }}
+                changedItems.map((entry) =>
+                  entry.type === "group" ? (
+                    <ConflictGroup
+                      key={entry.id}
+                      group={entry}
+                      onToggleAll={(keep) =>
+                        setRowsKeep(
+                          entry.rows.map((row) => row.id),
+                          keep,
+                        )
+                      }
+                      onToggleRow={setRowKeep}
                     />
-                    <span class="conflict-task-line">{row.line}</span>
-                    <span class={`conflict-source source-${row.change}`}>
-                      {conflictChangeLabel(row.change)}
-                    </span>
-                  </label>
-                ))
+                  ) : (
+                    <label class="conflict-task" key={entry.id}>
+                      <input
+                        type="checkbox"
+                        checked={entry.row.keep}
+                        aria-label={`Keep task: ${entry.row.line}`}
+                        onChange={(event) =>
+                          setRowKeep(entry.row.id, event.currentTarget.checked)
+                        }
+                      />
+                      <span class="conflict-task-line">{entry.row.line}</span>
+                      <span
+                        class={`conflict-source source-${entry.row.change}`}
+                      >
+                        {conflictChangeLabel(entry.row.change)}
+                      </span>
+                    </label>
+                  ),
+                )
               ) : (
                 <p class="conflict-status">
                   No added or removed tasks. Unchanged tasks are included in the
@@ -2171,6 +2223,63 @@ function ConflictDialog({ item, settings, onClose, onResolve }) {
 
 function taskLinesCount(content) {
   return content.split(/\r?\n/).filter((line) => line.trim()).length;
+}
+
+function groupTaskDescription(group) {
+  for (const row of group.rows) {
+    const description = parseTask(row.line).description;
+    if (description) return description;
+  }
+  return group.rows[0]?.line ?? "";
+}
+
+function ConflictGroup({ group, onToggleAll, onToggleRow }) {
+  const keptCount = group.rows.filter((row) => row.keep).length;
+  const allKept = keptCount === group.rows.length;
+  const someKept = keptCount > 0 && !allKept;
+  const description = groupTaskDescription(group);
+
+  return (
+    <details class="conflict-group" open={someKept}>
+      <summary class="conflict-group-summary">
+        <input
+          type="checkbox"
+          checked={allKept}
+          ref={(node) => {
+            if (node) node.indeterminate = someKept;
+          }}
+          aria-label={`Keep all lines for: ${group.label} ${description}`}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => onToggleAll(event.currentTarget.checked)}
+        />
+        <span class="conflict-group-label">
+          <span class="conflict-source source-grouped">{group.label}</span>
+          <span class="conflict-task-line">{description}</span>
+        </span>
+        <span class="conflict-group-count">
+          {group.rows.length} linked lines
+        </span>
+      </summary>
+      <div class="conflict-group-rows">
+        {group.rows.map((row) => (
+          <label class="conflict-task" key={row.id}>
+            <input
+              type="checkbox"
+              checked={row.keep}
+              aria-label={`Keep task: ${row.line}`}
+              onChange={(event) =>
+                onToggleRow(row.id, event.currentTarget.checked)
+              }
+            />
+            <span class="conflict-task-line">{row.line}</span>
+            <span class={`conflict-source source-${row.change}`}>
+              {conflictChangeLabel(row.change)}
+            </span>
+          </label>
+        ))}
+      </div>
+    </details>
+  );
 }
 
 function conflictChangeLabel(change) {

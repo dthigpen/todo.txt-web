@@ -58,7 +58,9 @@ server version. **Review & resolve** loads the latest server copy and lets you
 use the server version, use your device's version, or select individual tasks
 from both into a merge. Unchanged tasks are included automatically and hidden
 until expanded. Added and removed lines are identified against the last shared
-version; checking a removed task restores it. Task edits appear as a removal
+version; checking a removed task restores it. Related lines from a single
+recent action, such as completing a task, are grouped into one collapsible
+entry with a keep-all checkbox while still letting you pick individual lines. Task edits appear as a removal
 and an addition because todo.txt lines have no unique IDs. **Keep all tasks
 from either copy** is available, with a warning that it may restore intentional
 deletions. The resolved version syncs using the server's latest ETag. Use
