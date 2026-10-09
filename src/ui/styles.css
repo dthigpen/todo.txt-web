@@ -115,6 +115,9 @@ button:disabled {
 .save-state.remote .status-dot {
   background: #d29a4d;
 }
+.save-state.connected .status-dot {
+  background: #80a27f;
+}
 .global-error {
   width: min(1130px, 90vw);
   margin: 14px auto -20px;

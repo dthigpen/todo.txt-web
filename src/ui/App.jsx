@@ -1376,18 +1376,35 @@ function App() {
           <span>Tasks</span>
         </a>
         <div class="top-actions">
-          <span class={`save-state ${activeRemotePath.value ? "remote" : ""}`}>
-            <span class="status-dot" />
-            {activeRemotePath.value && pendingQueue.value[currentKey.value]
+          {(() => {
+            const isRemote = Boolean(activeRemotePath.value);
+            const hasQueued = Boolean(pendingQueue.value[currentKey.value]);
+            const isConnected =
+              isRemote &&
+              !hasQueued &&
+              isOnline &&
+              Boolean(serverSettings.value.token);
+            const stateClass = !isRemote
+              ? ""
+              : isConnected
+                ? "connected"
+                : "remote";
+            const label = hasQueued
               ? "Changes queued"
-              : activeRemotePath.value
-                ? !isOnline || !serverSettings.value.token
-                  ? "Saved on this device"
-                  : "Server file"
+              : isRemote
+                ? isConnected
+                  ? "Connected"
+                  : "Saved on this device"
                 : storageError.value
                   ? "Browser save issue"
-                  : "Saved in this browser"}
-          </span>
+                  : "Saved in this browser";
+            return (
+              <span class={`save-state ${stateClass}`.trim()}>
+                <span class="status-dot" />
+                {label}
+              </span>
+            );
+          })()}
           {installPrompt && (
             <button
               class="button button-secondary install-button"
