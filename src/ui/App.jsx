@@ -31,11 +31,13 @@ const SETTINGS_KEY = "todo-txt-web.server";
 const PENDING_KEY = "todo-txt-web.pending-sync";
 const ETAGS_KEY = "todo-txt-web.server-etags";
 const HISTORY_KEY = "todo-txt-web.line-history";
+const UNIFIED_MODE_KEY = "todo-txt-web.unified-mode";
 const storageError = signal("");
 const storageErrorDismissed = signal(false);
 const documents = signal(loadDocuments());
 const serverSettings = signal(loadServerSettings());
 const currentKey = signal(loadCurrentKey());
+const unifiedMode = signal(loadUnifiedMode());
 const pendingQueue = signal(loadPendingQueue());
 const serverEtags = signal(loadStoredObject(ETAGS_KEY));
 const lineHistory = signal(loadStoredObject(HISTORY_KEY));
@@ -64,6 +66,28 @@ function loadCurrentKey() {
       `Could not restore the last open list: ${error.message}.`,
     );
     return "local:todo.txt";
+  }
+}
+
+function loadUnifiedMode() {
+  try {
+    const saved = localStorage.getItem(UNIFIED_MODE_KEY);
+    return saved === "true";
+  } catch (error) {
+    reportStorageError(
+      `Could not restore unified mode preference: ${error.message}.`,
+    );
+    return false;
+  }
+}
+
+function saveUnifiedMode(value) {
+  try {
+    localStorage.setItem(UNIFIED_MODE_KEY, String(value));
+  } catch (error) {
+    reportStorageError(
+      `Could not save unified mode preference: ${error.message}.`,
+    );
   }
 }
 
@@ -245,10 +269,35 @@ function App() {
   const syncBusy = useRef(new Set());
   const remoteRefreshBusy = useRef(false);
   const quickAddRef = useRef(null);
-  const tasks = useMemo(
-    () => parseDocument(documentContent(currentKey.value)),
-    [documents.value, currentKey.value, documentRevision],
-  );
+
+  const activeKey = unifiedMode.value ? "unified" : currentKey.value;
+  const tasks = useMemo(() => {
+    if (unifiedMode.value) {
+      const localFiles = Object.keys(documents.value).filter((key) =>
+        key.startsWith("local:"),
+      );
+      const selectedServerFiles = Array.isArray(
+        serverSettings.value.selectedFiles,
+      )
+        ? serverSettings.value.selectedFiles
+        : [];
+      const base = serverSettings.value.base?.replace(/\/+$/, "");
+      const serverFileKeys = selectedServerFiles.map((path) =>
+        fileKey(base, path),
+      );
+      const allFileKeys = [...localFiles, ...serverFileKeys];
+      const allTasks = [];
+      for (const key of allFileKeys) {
+        const fileTasks = parseDocument(documentContent(key));
+        for (const task of fileTasks) {
+          allTasks.push({ ...task, fileKey: key });
+        }
+      }
+      return allTasks;
+    }
+    const fileTasks = parseDocument(documentContent(currentKey.value));
+    return fileTasks.map((task) => ({ ...task, fileKey: currentKey.value }));
+  }, [documents.value, currentKey.value, documentRevision, unifiedMode.value, serverSettings.value]);
 
   useEffect(() => {
     if (serverSettings.value.token) {
@@ -580,14 +629,14 @@ function App() {
     }
   }
 
-  function updateContent(content, label) {
-    if (undoActionRef.current?.key === currentKey.value) {
+  function updateContent(content, label, key = currentKey.value) {
+    if (undoActionRef.current?.key === key) {
       clearUndoAction();
     }
-    const previousContent = documentContent(currentKey.value);
+    const previousContent = documentContent(key);
     if (label && content !== previousContent) {
       const nextHistory = recordOperation(lineHistory.value, {
-        key: currentKey.value,
+        key,
         label,
         before: previousContent,
         after: content,
@@ -595,29 +644,30 @@ function App() {
       lineHistory.value = nextHistory;
       persistObject(HISTORY_KEY, nextHistory);
     }
-    const next = { ...documents.value, [currentKey.value]: content };
+    const next = { ...documents.value, [key]: content };
     documents.value = next;
     saveDocuments(next);
     setDocumentRevision((revision) => revision + 1);
-    if (activeRemotePath.value) {
-      const existing = pendingQueue.value[currentKey.value];
+    const remotePath = getRemotePath(key, serverSettings.value.base);
+    if (remotePath) {
+      const existing = pendingQueue.value[key];
       const queued = {
         ...(existing || {}),
         base: serverSettings.value.base,
         baseContent: existing?.baseContent ?? previousContent,
-        path: activeRemotePath.value,
+        path: remotePath,
         content,
-        etag: existing?.etag ?? remoteState.value.etag,
+        etag: existing?.etag ?? serverEtags.value[key] ?? null,
         status: existing?.status === "conflict" ? "conflict" : "pending",
       };
-      const nextQueue = { ...pendingQueue.value, [currentKey.value]: queued };
+      const nextQueue = { ...pendingQueue.value, [key]: queued };
       pendingQueue.value = nextQueue;
       persistObject(PENDING_KEY, nextQueue, setQueueRevision);
     }
   }
 
-  function updateTasks(nextTasks, label) {
-    updateContent(serializeDocument(nextTasks), label);
+  function updateTasks(nextTasks, label, key = currentKey.value) {
+    updateContent(serializeDocument(nextTasks), label, key);
   }
 
   async function syncPending(key) {
@@ -764,70 +814,171 @@ function App() {
     task.completed = false;
     task.completionDate = "";
     task.creationDate ||= today();
+    const targetKey = currentKey.value;
+    const before = documentContent(targetKey);
+    const targetTasks = parseDocument(documentContent(targetKey));
     updateTasks(
-      [{ ...task, creationDate: task.creationDate || today() }, ...tasks],
+      [{ ...task, creationDate: task.creationDate || today() }, ...targetTasks],
       "Added",
+      targetKey,
     );
     event.currentTarget.reset();
-    setNotice("Task added");
+    if (!unifiedMode.value) {
+      rememberUndoAction(
+        targetKey,
+        before,
+        documentContent(targetKey),
+        "Task added",
+      );
+    } else {
+      setNotice("Task added");
+    }
   }
 
   function toggleTask(task) {
-    const before = documentContent(currentKey.value);
+    const targetKey = task.fileKey || currentKey.value;
+    const before = documentContent(targetKey);
     const completionDate = today();
     const changed = task.completed
       ? reopenTask(task)
       : completeTask(task, completionDate);
-    const nextTasks = tasks.map((item) =>
+    const targetTasks = parseDocument(documentContent(targetKey));
+    const nextTasks = targetTasks.map((item) =>
       item.id === task.id ? changed : item,
     );
     const nextOccurrence = task.completed
       ? null
-      : nextRecurringTask(task, completionDate, tasks.length + 1);
+      : nextRecurringTask(task, completionDate, targetTasks.length + 1);
     if (nextOccurrence) nextTasks.push(nextOccurrence);
-    updateTasks(
-      nextTasks,
-      task.completed
-        ? "Reopened"
-        : nextOccurrence
-          ? "Completed & scheduled next"
-          : "Completed",
-    );
-    rememberUndoAction(
-      currentKey.value,
-      before,
-      documentContent(currentKey.value),
-      task.completed
-        ? "Task reopened"
-        : nextOccurrence
-          ? "Task completed and next occurrence created"
-          : "Task completed",
-    );
+    const message = task.completed
+      ? "Reopened"
+      : nextOccurrence
+        ? "Completed & scheduled next"
+        : "Completed";
+    updateTasks(nextTasks, message, targetKey);
+    if (!unifiedMode.value) {
+      rememberUndoAction(
+        targetKey,
+        before,
+        documentContent(targetKey),
+        task.completed
+          ? "Task reopened"
+          : nextOccurrence
+            ? "Task completed and next occurrence created"
+            : "Task completed",
+      );
+    } else {
+      setNotice(message);
+    }
   }
 
   function removeTask(task) {
+    const targetKey = task.fileKey || currentKey.value;
+    const before = documentContent(targetKey);
+    const targetTasks = parseDocument(documentContent(targetKey));
     updateTasks(
-      tasks.filter((item) => item.id !== task.id),
+      targetTasks.filter((item) => item.id !== task.id),
       "Removed",
+      targetKey,
     );
-  }
-
-  function saveEditedTask(nextTask) {
-    const before = documentContent(currentKey.value);
-    const message = editorTask ? "Task updated" : "Task added";
-    if (editorTask) {
-      updateTasks(
-        tasks.map((item) => (item.id === editorTask.id ? nextTask : item)),
-        "Updated",
+    if (!unifiedMode.value) {
+      rememberUndoAction(
+        targetKey,
+        before,
+        documentContent(targetKey),
+        "Task removed",
       );
     } else {
-      updateTasks(
-        [
-          { ...nextTask, creationDate: nextTask.creationDate || today() },
-          ...tasks,
-        ],
-        "Added",
+      setNotice("Task removed");
+    }
+  }
+
+  function moveTask(task, targetKey) {
+    const sourceKey = task.fileKey || currentKey.value;
+    if (sourceKey === targetKey) return;
+
+    const sourceBefore = documentContent(sourceKey);
+    const targetBefore = documentContent(targetKey);
+
+    const sourceTasks = parseDocument(documentContent(sourceKey));
+    const targetTasks = parseDocument(documentContent(targetKey));
+
+    const { fileKey, ...taskWithoutFileKey } = task;
+    const updatedSourceTasks = sourceTasks.filter((item) => item.id !== task.id);
+    const updatedTargetTasks = [taskWithoutFileKey, ...targetTasks];
+
+    updateTasks(updatedSourceTasks, "Removed", sourceKey);
+    updateTasks(updatedTargetTasks, "Added", targetKey);
+
+    if (!unifiedMode.value) {
+      rememberUndoAction(
+        sourceKey,
+        sourceBefore,
+        documentContent(sourceKey),
+        "Task moved from this list",
       );
+    } else {
+      setNotice("Task moved");
+    }
+  }
+
+  function saveEditedTask(nextTask, targetFileKey) {
+    const sourceKey = editorTask?.fileKey || currentKey.value;
+    const targetKey = targetFileKey || sourceKey;
+
+    if (editorTask && targetKey !== sourceKey) {
+      const sourceBefore = documentContent(sourceKey);
+      const targetBefore = documentContent(targetKey);
+
+      const sourceTasks = parseDocument(documentContent(sourceKey));
+      const targetTasks = parseDocument(documentContent(targetKey));
+
+      const updatedSourceTasks = sourceTasks.filter((item) => item.id !== editorTask.id);
+      const updatedTargetTasks = [nextTask, ...targetTasks];
+
+      updateTasks(updatedSourceTasks, "Removed", sourceKey);
+      updateTasks(updatedTargetTasks, "Added", targetKey);
+
+      if (!unifiedMode.value) {
+        rememberUndoAction(
+          sourceKey,
+          sourceBefore,
+          documentContent(sourceKey),
+          "Task moved from this list",
+        );
+      } else {
+        setNotice("Task moved and updated");
+      }
+    } else {
+      const before = documentContent(targetKey);
+      const message = editorTask ? "Task updated" : "Task added";
+      const targetTasks = parseDocument(documentContent(targetKey));
+      if (editorTask) {
+        updateTasks(
+          targetTasks.map((item) => (item.id === editorTask.id ? nextTask : item)),
+          "Updated",
+          targetKey,
+        );
+      } else {
+        updateTasks(
+          [
+            { ...nextTask, creationDate: nextTask.creationDate || today() },
+            ...targetTasks,
+          ],
+          "Added",
+          targetKey,
+        );
+      }
+      if (!unifiedMode.value) {
+        rememberUndoAction(
+          targetKey,
+          before,
+          documentContent(targetKey),
+          message,
+        );
+      } else {
+        setNotice(message);
+      }
     }
     setEditorTask(null);
     setTaskDialogOpen(false);
@@ -835,12 +986,6 @@ function App() {
       quickAddRef.current.value = "";
       setQuickDescription("");
     }
-    rememberUndoAction(
-      currentKey.value,
-      before,
-      documentContent(currentKey.value),
-      message,
-    );
   }
 
   async function addLocalFile(event) {
@@ -1526,10 +1671,21 @@ function App() {
             <select
               id="current-file-select"
               class="file-switcher"
-              value={currentKey.value}
-              onChange={(event) => switchFile(event.currentTarget.value)}
+              value={unifiedMode.value ? "unified" : currentKey.value}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                if (value === "unified") {
+                  unifiedMode.value = true;
+                  saveUnifiedMode(true);
+                } else {
+                  unifiedMode.value = false;
+                  saveUnifiedMode(false);
+                  switchFile(value);
+                }
+              }}
               aria-label="Switch task list"
             >
+              <option value="unified">All files</option>
               {fileOptions.map((file) => (
                 <option value={file.key} key={file.key}>
                   {file.label}
@@ -1537,11 +1693,13 @@ function App() {
               ))}
             </select>
             <span class="file-location">
-              {activeRemotePath.value
-                ? isOnline && serverSettings.value.token
-                  ? "Plain File Server"
-                  : "Plain File Server · saved on this device"
-                : "Saved in this browser"}
+              {unifiedMode.value
+                ? "Showing tasks from all local files and selected server files"
+                : activeRemotePath.value
+                  ? isOnline && serverSettings.value.token
+                    ? "Plain File Server"
+                    : "Plain File Server · saved on this device"
+                  : "Saved in this browser"}
             </span>
             <div class="sidebar-rule" />
             <div class="file-caption">VIEW</div>
@@ -1592,11 +1750,28 @@ function App() {
             </div>
 
             <form class="quick-add" onSubmit={addTask}>
+              {unifiedMode.value && (
+                <select
+                  value={currentKey.value}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    currentKey.value = value;
+                    activeRemotePath.value = getRemotePath(value, serverSettings.value.base);
+                  }}
+                  aria-label="Choose file to add task to"
+                >
+                  {fileOptions.map((file) => (
+                    <option value={file.key} key={file.key}>
+                      {file.label}
+                    </option>
+                  ))}
+                </select>
+              )}
               <input
                 ref={quickAddRef}
                 name="task"
                 aria-label="Add a task"
-                placeholder="Add a task"
+                placeholder={unifiedMode.value ? "Add a task to the selected file" : "Add a task"}
                 autocomplete="off"
               />
               <button class="button button-primary" type="submit">
@@ -1706,7 +1881,7 @@ function App() {
               </div>
             )}
 
-            {undoAction?.key === currentKey.value ? (
+            {undoAction && (unifiedMode.value || undoAction.key === currentKey.value) ? (
               <div class="undo-notice" role="status" aria-live="polite">
                 <span>{undoAction.message}.</span>
                 <button type="button" onClick={undoLastAction}>
@@ -1851,6 +2026,9 @@ function App() {
               )
               .map(({ key, value }) => `${key}:${value}`),
           )}
+          fileOptions={fileOptions}
+          currentKey={currentKey.value}
+          serverSettings={serverSettings.value}
           onClose={() => {
             setTaskDialogOpen(false);
             setEditorTask(null);
@@ -2826,6 +3004,9 @@ function TaskDialog({
   allProjects,
   allContexts,
   metadataSuggestions,
+  fileOptions,
+  currentKey,
+  serverSettings,
   onClose,
   onSave,
   onDelete,
@@ -2856,6 +3037,9 @@ function TaskDialog({
   const [recurrenceUnit, setRecurrenceUnit] = useState(
     initialRecurrence?.unit || "w",
   );
+  const [selectedFileKey, setSelectedFileKey] = useState(
+    task?.fileKey || "",
+  );
 
   function editField(field, value) {
     setDraft({ ...draft, [field]: value });
@@ -2863,9 +3047,13 @@ function TaskDialog({
 
   function save(event) {
     event.preventDefault();
+    if (!task && !selectedFileKey) {
+      return;
+    }
     if (plainTextMode) {
       const parsed = parseTask(rawLine, draft.id);
-      onSave({ ...parsed, id: draft.id });
+      const { fileKey, ...taskWithoutFileKey } = parsed;
+      onSave({ ...taskWithoutFileKey, id: draft.id }, selectedFileKey);
     } else {
       let nextTask = { ...draft, creationDate: draft.creationDate || today() };
       if (recurrenceMode === "none") {
@@ -2881,7 +3069,8 @@ function TaskDialog({
           `${prefix}${interval}${recurrenceUnit}`,
         );
       }
-      onSave(nextTask);
+      const { fileKey, ...taskWithoutFileKey } = nextTask;
+      onSave(taskWithoutFileKey, selectedFileKey);
     }
   }
 
@@ -2910,6 +3099,34 @@ function TaskDialog({
           </button>
         </div>
         <form onSubmit={save}>
+          <label class="field-label" for="file-selector">
+            {task ? "File" : "Add to file"}
+          </label>
+          <div class="file-selector-row">
+            <select
+              id="file-selector"
+              value={selectedFileKey}
+              onChange={(event) => setSelectedFileKey(event.currentTarget.value)}
+              aria-label="Choose file"
+            >
+              {task ? (
+                fileOptions.map((file) => (
+                  <option value={file.key} key={file.key}>
+                    {file.label}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="">Select a file...</option>
+                  {fileOptions.map((file) => (
+                    <option value={file.key} key={file.key}>
+                      {file.label}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+          </div>
           {plainTextMode ? (
             <>
               <label class="field-label" for="raw-line">

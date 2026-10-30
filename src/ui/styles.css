@@ -487,6 +487,16 @@ h2 {
   border-color: #a7bca6;
   box-shadow: 0 0 0 3px #edf3ec;
 }
+.quick-add select {
+  min-width: 180px;
+  max-width: 280px;
+  padding: 7px 8px;
+  border: 1px solid #e5e8e2;
+  border-radius: 6px;
+  background: #fff;
+  color: #404b42;
+  font-size: 10px;
+}
 .add-plus {
   color: #759176;
   font-size: 22px;
@@ -650,6 +660,11 @@ h2 {
   font-size: 9px;
   line-height: 1;
 }
+.file-chip {
+  color: #6b7c8d;
+  background: #eef0f4;
+  font-weight: 600;
+}
 .project-chip {
   color: #71836b;
   background: #f0f3ed;
@@ -807,6 +822,12 @@ h2 {
 }
 .dialog-heading h2 {
   font-size: 22px;
+}
+.file-selector-row {
+  margin-bottom: 12px;
+}
+.file-selector-row select {
+  width: 100%;
 }
 .close-button {
   width: 30px;
