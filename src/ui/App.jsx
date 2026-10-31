@@ -270,7 +270,6 @@ function App() {
   const remoteRefreshBusy = useRef(false);
   const quickAddRef = useRef(null);
 
-  const activeKey = unifiedMode.value ? "unified" : currentKey.value;
   const tasks = useMemo(() => {
     if (unifiedMode.value) {
       const localFiles = Object.keys(documents.value).filter((key) =>
@@ -297,7 +296,13 @@ function App() {
     }
     const fileTasks = parseDocument(documentContent(currentKey.value));
     return fileTasks.map((task) => ({ ...task, fileKey: currentKey.value }));
-  }, [documents.value, currentKey.value, documentRevision, unifiedMode.value, serverSettings.value]);
+  }, [
+    documents.value,
+    currentKey.value,
+    documentRevision,
+    unifiedMode.value,
+    serverSettings.value,
+  ]);
 
   useEffect(() => {
     if (serverSettings.value.token) {
@@ -893,47 +898,19 @@ function App() {
     }
   }
 
-  function moveTask(task, targetKey) {
-    const sourceKey = task.fileKey || currentKey.value;
-    if (sourceKey === targetKey) return;
-
-    const sourceBefore = documentContent(sourceKey);
-    const targetBefore = documentContent(targetKey);
-
-    const sourceTasks = parseDocument(documentContent(sourceKey));
-    const targetTasks = parseDocument(documentContent(targetKey));
-
-    const { fileKey, ...taskWithoutFileKey } = task;
-    const updatedSourceTasks = sourceTasks.filter((item) => item.id !== task.id);
-    const updatedTargetTasks = [taskWithoutFileKey, ...targetTasks];
-
-    updateTasks(updatedSourceTasks, "Removed", sourceKey);
-    updateTasks(updatedTargetTasks, "Added", targetKey);
-
-    if (!unifiedMode.value) {
-      rememberUndoAction(
-        sourceKey,
-        sourceBefore,
-        documentContent(sourceKey),
-        "Task moved from this list",
-      );
-    } else {
-      setNotice("Task moved");
-    }
-  }
-
   function saveEditedTask(nextTask, targetFileKey) {
     const sourceKey = editorTask?.fileKey || currentKey.value;
     const targetKey = targetFileKey || sourceKey;
 
     if (editorTask && targetKey !== sourceKey) {
       const sourceBefore = documentContent(sourceKey);
-      const targetBefore = documentContent(targetKey);
 
       const sourceTasks = parseDocument(documentContent(sourceKey));
       const targetTasks = parseDocument(documentContent(targetKey));
 
-      const updatedSourceTasks = sourceTasks.filter((item) => item.id !== editorTask.id);
+      const updatedSourceTasks = sourceTasks.filter(
+        (item) => item.id !== editorTask.id,
+      );
       const updatedTargetTasks = [nextTask, ...targetTasks];
 
       updateTasks(updatedSourceTasks, "Removed", sourceKey);
@@ -955,7 +932,9 @@ function App() {
       const targetTasks = parseDocument(documentContent(targetKey));
       if (editorTask) {
         updateTasks(
-          targetTasks.map((item) => (item.id === editorTask.id ? nextTask : item)),
+          targetTasks.map((item) =>
+            item.id === editorTask.id ? nextTask : item,
+          ),
           "Updated",
           targetKey,
         );
@@ -1756,7 +1735,10 @@ function App() {
                   onChange={(event) => {
                     const value = event.currentTarget.value;
                     currentKey.value = value;
-                    activeRemotePath.value = getRemotePath(value, serverSettings.value.base);
+                    activeRemotePath.value = getRemotePath(
+                      value,
+                      serverSettings.value.base,
+                    );
                   }}
                   aria-label="Choose file to add task to"
                 >
@@ -1771,7 +1753,11 @@ function App() {
                 ref={quickAddRef}
                 name="task"
                 aria-label="Add a task"
-                placeholder={unifiedMode.value ? "Add a task to the selected file" : "Add a task"}
+                placeholder={
+                  unifiedMode.value
+                    ? "Add a task to the selected file"
+                    : "Add a task"
+                }
                 autocomplete="off"
               />
               <button class="button button-primary" type="submit">
@@ -1881,7 +1867,8 @@ function App() {
               </div>
             )}
 
-            {undoAction && (unifiedMode.value || undoAction.key === currentKey.value) ? (
+            {undoAction &&
+            (unifiedMode.value || undoAction.key === currentKey.value) ? (
               <div class="undo-notice" role="status" aria-live="polite">
                 <span>{undoAction.message}.</span>
                 <button type="button" onClick={undoLastAction}>
@@ -3005,8 +2992,6 @@ function TaskDialog({
   allContexts,
   metadataSuggestions,
   fileOptions,
-  currentKey,
-  serverSettings,
   onClose,
   onSave,
   onDelete,
@@ -3037,9 +3022,7 @@ function TaskDialog({
   const [recurrenceUnit, setRecurrenceUnit] = useState(
     initialRecurrence?.unit || "w",
   );
-  const [selectedFileKey, setSelectedFileKey] = useState(
-    task?.fileKey || "",
-  );
+  const [selectedFileKey, setSelectedFileKey] = useState(task?.fileKey || "");
 
   function editField(field, value) {
     setDraft({ ...draft, [field]: value });
@@ -3052,8 +3035,7 @@ function TaskDialog({
     }
     if (plainTextMode) {
       const parsed = parseTask(rawLine, draft.id);
-      const { fileKey, ...taskWithoutFileKey } = parsed;
-      onSave({ ...taskWithoutFileKey, id: draft.id }, selectedFileKey);
+      onSave({ ...parsed, id: draft.id }, selectedFileKey);
     } else {
       let nextTask = { ...draft, creationDate: draft.creationDate || today() };
       if (recurrenceMode === "none") {
@@ -3069,8 +3051,7 @@ function TaskDialog({
           `${prefix}${interval}${recurrenceUnit}`,
         );
       }
-      const { fileKey, ...taskWithoutFileKey } = nextTask;
-      onSave(taskWithoutFileKey, selectedFileKey);
+      onSave(nextTask, selectedFileKey);
     }
   }
 
@@ -3106,7 +3087,9 @@ function TaskDialog({
             <select
               id="file-selector"
               value={selectedFileKey}
-              onChange={(event) => setSelectedFileKey(event.currentTarget.value)}
+              onChange={(event) =>
+                setSelectedFileKey(event.currentTarget.value)
+              }
               aria-label="Choose file"
             >
               {task ? (
