@@ -1206,7 +1206,7 @@ function App() {
       setShowReauthForm(false);
       await refreshServerFiles();
       retryFailedSyncs();
-      setNotice("Connected to Plain File Server");
+      setNotice("Connected to Actual Files");
     } catch (error) {
       if (error instanceof TypeError) {
         const isMixedContent =
@@ -1756,8 +1756,8 @@ function App() {
                 ? "Showing tasks from all local files and selected server files"
                 : activeRemotePath.value
                   ? isOnline && serverSettings.value.token
-                    ? "Plain File Server"
-                    : "Plain File Server · saved on this device"
+                    ? "Actual Files"
+                    : "Actual Files · saved on this device"
                   : "Saved in this browser"}
             </span>
             <div class="sidebar-rule" />
@@ -2714,7 +2714,7 @@ function FilesDialog(props) {
         <section class="settings-section">
           <div class="section-title-row">
             <h3>
-              Plain File Server <span class="optional-label">OPTIONAL</span>
+              Actual Files <span class="optional-label">OPTIONAL</span>
             </h3>
             {settings.token && (
               <button class="text-button" onClick={disconnect}>

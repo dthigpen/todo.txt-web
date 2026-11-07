@@ -5,7 +5,7 @@
 todo.txt Web is a lightweight, local-first task manager with projects,
 contexts, priorities, and other useful task features. Lists remain portable in
 the plain-text [todo.txt format](https://todotxt.org/) and work with editors,
-scripts, and other apps. Plain File Server is an optional remote file API, not
+scripts, and other apps. Actual Files is an optional remote file API, not
 a requirement for using the app.
 
 ## Goals
@@ -15,10 +15,10 @@ a requirement for using the app.
   priorities, dates, and key-value metadata stay in todo.txt lines.
 - Work immediately without an account or server, saving files in browser
   storage with straightforward import and export.
-- Let users open multiple files, including files on Plain File Server, by
+- Let users open multiple files, including files on Actual Files, by
   logical path. The default file is `todo.txt`; server permissions determine
   which paths can be read or written.
-- Avoid silently overwriting newer changes. Use Plain File Server ETags and
+- Avoid silently overwriting newer changes. Use Actual Files ETags and
   conditional writes; report conflicts for user action.
 
 ## User experience
@@ -59,7 +59,7 @@ line.
 - Local mode is the default. Keep a separate browser-stored document for each
   selected logical file name; import a `.txt` file and export the current
   content without changing its line format.
-- Optional Plain File Server mode has a configurable API URL, login, a list of
+- Optional Actual Files mode has a configurable API URL, login, a list of
   readable file paths, and a path field for other files the user can access.
 - Select, create, and switch paths explicitly. Never assume every writable
   path is discoverable from the server's read-only file listing.
@@ -145,7 +145,7 @@ Mutations serialize one task per line with a final newline when nonempty.
 - Vite for development/build, with relative asset paths for GitHub Pages.
 - LocalStorage for lightweight browser-only document/config persistence,
   including last-list selection and known server paths.
-- Plain File Server REST API as an optional backend, using `GET /api/files`,
+- Actual Files REST API as an optional backend, using `GET /api/files`,
   conditional `GET /api/files/{path}` with `If-None-Match`,
   `PUT /api/files/{path}` with `If-Match`, login JWTs, and ETags.
 - A small same-origin service worker caches only the static application shell

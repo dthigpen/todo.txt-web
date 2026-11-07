@@ -5,7 +5,7 @@
 A simple, local-first task manager with projects, contexts, priorities, due
 dates, start dates, and recurring tasks. Use it with browser storage alone, or
 optionally connect it to
-[Plain File Server](https://github.com/dthigpen/plain-file-server) to open your
+[Actual Files](https://github.com/dthigpen/actual-files) to open your
 task lists from a server. Lists stay portable as plain-text todo files.
 
 ![Screenshot of todo.txt Web showing the task list, filters, and scheduled tasks](todotxt-web.png)
@@ -28,9 +28,9 @@ from a supported browser to launch it like an app. Its static app shell is
 cached for offline startup, while your lists and edits are stored locally in
 the browser.
 
-## Optional Plain File Server
+## Optional Actual Files
 
-Connect to a [Plain File Server](https://github.com/dthigpen/plain-file-server)
+Connect to [Actual Files](https://github.com/dthigpen/actual-files)
 to open your task lists from a server instead of browser storage.
 
 **Connecting.** Open **Files & settings**, enter the server API URL (for
