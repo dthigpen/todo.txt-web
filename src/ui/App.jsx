@@ -261,6 +261,8 @@ function App() {
   const [apiBase, setApiBase] = useState(
     serverSettings.value.base || "http://127.0.0.1:3000/api",
   );
+  const [showReauthForm, setShowReauthForm] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const searchRef = useRef(null);
   const importRef = useRef(null);
   const saveTimer = useRef(null);
@@ -450,10 +452,14 @@ function App() {
       saveSettings(nextSettings);
       setIsOnline(true);
       setServerError("");
+      setSessionExpired(false);
       await refreshKnownRemoteFiles();
     } catch (error) {
       if (error instanceof TypeError || !navigator.onLine) {
         setIsOnline(false);
+      } else if (error.status === 401) {
+        setSessionExpired(true);
+        setServerError("");
       } else {
         setServerError(error.message);
       }
@@ -609,9 +615,8 @@ function App() {
             break;
           }
           if (error.status === 401) {
-            setServerError(
-              "Your server sign-in expired. Sign in again to refresh lists.",
-            );
+            setSessionExpired(true);
+            setServerError("");
             break;
           }
           setServerError(`Could not refresh ${path}: ${error.message}`);
@@ -1197,6 +1202,8 @@ function App() {
       saveSettings(next);
       setPassword("");
       setAuthHint("");
+      setSessionExpired(false);
+      setShowReauthForm(false);
       await refreshServerFiles();
       retryFailedSyncs();
       setNotice("Connected to Plain File Server");
@@ -1219,13 +1226,65 @@ function App() {
     }
   }
 
+  async function reauthenticate(event) {
+    event.preventDefault();
+    setBusy(true);
+    setServerError("");
+    try {
+      const result = await login(apiBase, username, password);
+      if (typeof result.token !== "string" || !result.token) {
+        throw new Error("The server did not return a login token.");
+      }
+      const next = {
+        ...serverSettings.value,
+        token: result.token,
+      };
+      serverSettings.value = next;
+      saveSettings(next);
+      setPassword("");
+      setAuthHint("");
+      setSessionExpired(false);
+      setShowReauthForm(false);
+      await refreshServerFiles();
+      retryFailedSyncs();
+      setNotice("Re-authenticated successfully");
+    } catch (error) {
+      if (error instanceof TypeError) {
+        const isMixedContent =
+          window.location.protocol === "https:" && /^http:/i.test(apiBase);
+        setAuthHint(
+          isMixedContent
+            ? "The app is loaded over HTTPS but this API URL uses HTTP. Browsers block that request as mixed content; use the server's HTTPS URL."
+            : `The browser could not read a response from the server. Check that this device can reach the API and trusts its HTTPS certificate. If CORS is enabled, allow origin ${window.location.origin}, OPTIONS and GET/POST/PUT, request headers Authorization/Content-Type/If-Match/If-None-Match, and expose the ETag response header.`,
+        );
+        setServerError("");
+      } else {
+        setAuthHint("");
+        setServerError(`Could not re-authenticate: ${error.message}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function disconnect() {
     if (exportKey.startsWith("server:")) setExportKey("local:todo.txt");
+    if (unsyncedEntries.length > 0) {
+      if (
+        !window.confirm(
+          `You have ${unsyncedEntries.length} unsynced change${unsyncedEntries.length === 1 ? "" : "es"}. Signing out will keep them saved on this device, but you'll need to sign in again to sync them. Continue?`,
+        )
+      ) {
+        return;
+      }
+    }
     serverSettings.value = {
       ...serverSettings.value,
       token: undefined,
     };
     saveSettings(serverSettings.value);
+    setSessionExpired(false);
+    setShowReauthForm(false);
     setNotice(
       activeRemotePath.value
         ? "Signed out. This server list remains available from its saved copy."
@@ -1538,24 +1597,31 @@ function App() {
               isRemote &&
               !hasQueued &&
               isOnline &&
-              Boolean(serverSettings.value.token);
+              Boolean(serverSettings.value.token) &&
+              !sessionExpired;
             const stateClass = !isRemote
               ? ""
-              : isConnected
-                ? "connected"
-                : "remote";
+              : sessionExpired
+                ? "session-expired"
+                : isConnected
+                  ? "connected"
+                  : "remote";
             const label = hasQueued
               ? "Changes queued"
               : isRemote
-                ? isConnected
-                  ? "Connected"
-                  : "Saved on this device"
+                ? sessionExpired
+                  ? "Session expired"
+                  : isConnected
+                    ? "Connected"
+                    : "Saved on this device"
                 : storageError.value
                   ? "Browser save issue"
                   : "Saved in this browser";
             return (
               <span class={`save-state ${stateClass}`.trim()}>
-                <span class="status-dot" />
+                <span
+                  class={`status-dot ${sessionExpired ? "status-warning" : ""}`}
+                />
                 {label}
               </span>
             );
@@ -1615,13 +1681,27 @@ function App() {
                 ? `Changes to ${conflictLabel} need review. Your local copies are safe.`
                 : !isOnline
                   ? `You're offline. Changes to ${unsyncedLabel} are saved on this device and will sync when you're back online.`
-                  : !serverSettings.value.token
-                    ? `Changes to ${unsyncedLabel} are saved here. Sign in to sync them.`
-                    : `Changes to ${unsyncedLabel} are saved here and waiting to sync.`}
+                  : sessionExpired
+                    ? `Your session expired. Changes to ${unsyncedLabel} are saved on this device. Re-authenticate to sync them.`
+                    : !serverSettings.value.token
+                      ? `Changes to ${unsyncedLabel} are saved here. Sign in to sync them.`
+                      : `Changes to ${unsyncedLabel} are saved here and waiting to sync.`}
             </span>
             {!serverSettings.value.token && (
               <button class="sync-retry" onClick={signInToSync}>
                 Sign in
+              </button>
+            )}
+            {sessionExpired && (
+              <button
+                class="sync-retry"
+                onClick={() => {
+                  setExportKey(currentKey.value);
+                  setSettingsOpen(true);
+                  setShowReauthForm(true);
+                }}
+              >
+                Re-authenticate
               </button>
             )}
             {firstConflict && (
@@ -1980,6 +2060,10 @@ function App() {
           authHint={authHint}
           connect={connect}
           disconnect={disconnect}
+          reauthenticate={reauthenticate}
+          sessionExpired={sessionExpired}
+          showReauthForm={showReauthForm}
+          setShowReauthForm={setShowReauthForm}
           settings={serverSettings.value}
           serverFiles={settingsServerFiles}
           selectedServerFiles={selectedServerFiles}
@@ -2482,6 +2566,10 @@ function FilesDialog(props) {
     authHint,
     connect,
     disconnect,
+    reauthenticate,
+    sessionExpired,
+    showReauthForm,
+    setShowReauthForm,
     settings,
     serverFiles,
     selectedServerFiles,
@@ -2688,103 +2776,158 @@ function FilesDialog(props) {
             </>
           ) : (
             <div class="server-connected">
-              <div class="connected-note">
-                <span class="status-dot" /> Signed in as{" "}
+              <div
+                class={`connected-note ${sessionExpired ? "session-expired" : ""}`}
+              >
+                <span
+                  class={`status-dot ${sessionExpired ? "status-warning" : ""}`}
+                />{" "}
+                {sessionExpired ? "Session expired" : "Connected"} as{" "}
                 <strong>{settings.username}</strong>
               </div>
-              <p class="fine-print session-note">
-                This browser keeps its own sign-in token; signing in on another
-                device does not replace this device's saved lists.
-              </p>
-              <div class="section-title-row">
-                <span class="field-label">
-                  Choose the files that contain tasks
-                </span>
-                <button class="text-button" onClick={refreshServerFiles}>
-                  Refresh
-                </button>
-              </div>
-              <p class="fine-print">
-                Only selected files appear in Current list. Select an existing
-                file to cache it here for offline use.
-              </p>
-              <div class="remote-browser-tools">
-                <span class="remote-file-count">
-                  {countServerFiles(serverTree)} files ·{" "}
-                  {selectedServerFiles.length} in your lists
-                </span>
-                <label class="remote-search">
-                  <span class="visually-hidden">Search server files</span>
-                  <input
-                    type="search"
-                    value={serverSearch}
-                    onInput={(event) =>
-                      setServerSearch(event.currentTarget.value)
-                    }
-                    placeholder="Search files and folders"
-                  />
-                </label>
-              </div>
-              <form
-                class="server-path-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (!remotePathInput.trim()) return;
-                  openRemote(remotePathInput).then((opened) => {
-                    if (opened) setRemotePathInput("");
-                  });
-                }}
-              >
-                <label class="visually-hidden" for="server-file-path">
-                  New or existing server file path
-                </label>
-                <input
-                  id="server-file-path"
-                  value={remotePathInput}
-                  onInput={(event) =>
-                    setRemotePathInput(event.currentTarget.value)
-                  }
-                  placeholder="New path, e.g. household/todo.txt"
-                  disabled={busy}
-                />
-                <button
-                  class="tree-add-button"
-                  type="submit"
-                  aria-label="Create or open server file"
-                  title="Create or open server file"
-                  disabled={busy || !remotePathInput.trim()}
-                >
-                  +
-                </button>
-              </form>
-              <div class="saved-file-list remote-file-list">
-                {serverTree.length ? (
-                  <ServerFileTree
-                    nodes={serverTree}
-                    selectedFiles={selectedServerFiles}
-                    onToggle={toggleServerFile}
-                    expandMatches={Boolean(serverSearch.trim())}
-                    loadingPath={loadingServerPath}
-                  />
-                ) : (
-                  <span class="fine-print">
-                    {serverFiles.length
-                      ? "No files match that search."
-                      : "No readable files listed yet."}
-                  </span>
-                )}
-              </div>
-              {serverPathNotice && (
-                <p class="connected-note" role="status">
-                  {serverPathNotice}
-                </p>
+              {sessionExpired ? (
+                <>
+                  <p class="fine-print session-expired-note">
+                    Your session expired. Re-authenticate to sync changes to the
+                    server. Your local files and unsynced changes are safe.
+                  </p>
+                  {!showReauthForm ? (
+                    <button
+                      class="button button-primary"
+                      onClick={() => setShowReauthForm(true)}
+                    >
+                      Re-authenticate
+                    </button>
+                  ) : (
+                    <form class="reauth-form" onSubmit={reauthenticate}>
+                      <label>
+                        <span class="field-label">Password</span>
+                        <input
+                          type="password"
+                          autocomplete="current-password"
+                          value={password}
+                          onInput={(event) =>
+                            setPassword(event.currentTarget.value)
+                          }
+                          placeholder="Enter your password"
+                          required
+                        />
+                      </label>
+                      <div class="reauth-actions">
+                        <button
+                          type="button"
+                          class="button button-secondary"
+                          onClick={() => {
+                            setShowReauthForm(false);
+                            setPassword("");
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button class="button button-primary" disabled={busy}>
+                          {busy ? "Re-authenticating…" : "Re-authenticate"}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p class="fine-print session-note">
+                    This browser keeps its own sign-in token; signing in on
+                    another device does not replace this device's saved lists.
+                  </p>
+                  <div class="section-title-row">
+                    <span class="field-label">
+                      Choose the files that contain tasks
+                    </span>
+                    <button class="text-button" onClick={refreshServerFiles}>
+                      Refresh
+                    </button>
+                  </div>
+                  <p class="fine-print">
+                    Only selected files appear in Current list. Select an
+                    existing file to cache it here for offline use.
+                  </p>
+                  <div class="remote-browser-tools">
+                    <span class="remote-file-count">
+                      {countServerFiles(serverTree)} files ·{" "}
+                      {selectedServerFiles.length} in your lists
+                    </span>
+                    <label class="remote-search">
+                      <span class="visually-hidden">Search server files</span>
+                      <input
+                        type="search"
+                        value={serverSearch}
+                        onInput={(event) =>
+                          setServerSearch(event.currentTarget.value)
+                        }
+                        placeholder="Search files and folders"
+                      />
+                    </label>
+                  </div>
+                  <form
+                    class="server-path-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!remotePathInput.trim()) return;
+                      openRemote(remotePathInput).then((opened) => {
+                        if (opened) setRemotePathInput("");
+                      });
+                    }}
+                  >
+                    <label class="visually-hidden" for="server-file-path">
+                      New or existing server file path
+                    </label>
+                    <input
+                      id="server-file-path"
+                      value={remotePathInput}
+                      onInput={(event) =>
+                        setRemotePathInput(event.currentTarget.value)
+                      }
+                      placeholder="New path, e.g. household/todo.txt"
+                      disabled={busy}
+                    />
+                    <button
+                      class="tree-add-button"
+                      type="submit"
+                      aria-label="Create or open server file"
+                      title="Create or open server file"
+                      disabled={busy || !remotePathInput.trim()}
+                    >
+                      +
+                    </button>
+                  </form>
+                  <div class="saved-file-list remote-file-list">
+                    {serverTree.length ? (
+                      <ServerFileTree
+                        nodes={serverTree}
+                        selectedFiles={selectedServerFiles}
+                        onToggle={toggleServerFile}
+                        expandMatches={Boolean(serverSearch.trim())}
+                        loadingPath={loadingServerPath}
+                      />
+                    ) : (
+                      <span class="fine-print">
+                        {serverFiles.length
+                          ? "No files match that search."
+                          : "No readable files listed yet."}
+                      </span>
+                    )}
+                  </div>
+                  {serverPathNotice && (
+                    <p class="connected-note" role="status">
+                      {serverPathNotice}
+                    </p>
+                  )}
+                  <p class="fine-print">
+                    Enter a relative path. A missing file is created
+                    immediately, with parent folders as needed, and added to
+                    your lists. Empty folders are not stored. Unchecking a file
+                    only removes it from your list picker.
+                  </p>
+                </>
               )}
-              <p class="fine-print">
-                Enter a relative path. A missing file is created immediately,
-                with parent folders as needed, and added to your lists. Empty
-                folders are not stored. Unchecking a file only removes it from
-                your list picker.
-              </p>
             </div>
           )}
           {(serverError || storageError) && (

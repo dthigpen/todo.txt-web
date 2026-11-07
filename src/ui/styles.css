@@ -118,6 +118,12 @@ button:disabled {
 .save-state.connected .status-dot {
   background: #80a27f;
 }
+.save-state.session-expired .status-dot {
+  background: #d4a857;
+}
+.status-warning {
+  background: #d4a857;
+}
 .global-error {
   width: min(1130px, 90vw);
   margin: 14px auto -20px;
@@ -1340,6 +1346,28 @@ h2 {
 }
 .connected-note strong {
   color: #3c5742;
+}
+.connected-note.session-expired {
+  background: #fdf8f0;
+  color: #8a6a4a;
+}
+.session-expired-note {
+  color: #8a6a4a;
+  margin: 8px 0 12px;
+  line-height: 1.5;
+}
+.reauth-form {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #e9ece6;
+  border-radius: 7px;
+  background: #fafbf9;
+}
+.reauth-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 12px;
+  justify-content: flex-end;
 }
 .section-title-row {
   display: flex;
